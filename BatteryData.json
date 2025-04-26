@@ -521,8 +521,8 @@
     "AEMO KCI Id": "",
     "Survey Last Requested": "Feb-25",
     "Survey Version DateTime": "11/03/2025",
-    "Battery Manufacturer": "",
-    "Battery Model": "",
+    "Battery Manufacturer": "Fluence",
+    "Battery Model": "Advancion",
     "Inverter Manufacturer": "",
     "Inverter Model": ""
   },
@@ -1265,10 +1265,10 @@
     "AEMO KCI Id": "S00021",
     "Survey Last Requested": "Feb-25",
     "Survey Version DateTime": "24/03/2025",
-    "Battery Manufacturer": "",
-    "Battery Model": "",
-    "Inverter Manufacturer": "",
-    "Inverter Model": ""
+    "Battery Manufacturer": "Tesla",
+    "Battery Model": "Megapack 2.0",
+    "Inverter Manufacturer": "Tesla",
+    "Inverter Model": "PCS 2.0"
   },
   {
     "Region": "NSW1",
@@ -1420,10 +1420,10 @@
     "AEMO KCI Id": "Q00004",
     "Survey Last Requested": "Feb-25",
     "Survey Version DateTime": "18/03/2025",
-    "Battery Manufacturer": "",
-    "Battery Model": "",
-    "Inverter Manufacturer": "",
-    "Inverter Model": ""
+    "Battery Manufacturer": "Tesla",
+    "Battery Model": "Megapack 2.0",
+    "Inverter Manufacturer": "Tesla",
+    "Inverter Model": "PCS 2.0"
   },
   {
     "Region": "QLD1",
@@ -1792,10 +1792,10 @@
     "AEMO KCI Id": "N00067",
     "Survey Last Requested": "Feb-25",
     "Survey Version DateTime": "11/03/2025",
-    "Battery Manufacturer": "",
-    "Battery Model": "",
-    "Inverter Manufacturer": "",
-    "Inverter Model": ""
+    "Battery Manufacturer": "Fluence",
+    "Battery Model": "Gridstack",
+    "Inverter Manufacturer": "Fluence",
+    "Inverter Model": "Advancion PCS / Siemens Sinamics S120"
   },
   {
     "Region": "VIC1",
@@ -1823,10 +1823,10 @@
     "AEMO KCI Id": "",
     "Survey Last Requested": "Feb-25",
     "Survey Version DateTime": "3/12/2024",
-    "Battery Manufacturer": "",
-    "Battery Model": "",
+    "Battery Manufacturer": "Tesla",
+    "Battery Model": "Megapack 1.0",
     "Inverter Manufacturer": "",
-    "Inverter Model": ""
+    "Inverter Model": "PCS 1.0"
   },
   {
     "Region": "QLD1",
@@ -2474,10 +2474,10 @@
     "AEMO KCI Id": "N00183",
     "Survey Last Requested": "Feb-25",
     "Survey Version DateTime": "17/03/2025",
-    "Battery Manufacturer": "",
-    "Battery Model": "",
-    "Inverter Manufacturer": "",
-    "Inverter Model": ""
+    "Battery Manufacturer": "Tesla",
+    "Battery Model": "Megapack 2.0",
+    "Inverter Manufacturer": "Tesla",
+    "Inverter Model": "Megapack 2.0"
   },
   {
     "Region": "QLD1",
@@ -2660,10 +2660,10 @@
     "AEMO KCI Id": "Q00032",
     "Survey Last Requested": "Feb-25",
     "Survey Version DateTime": "14/03/2025",
-    "Battery Manufacturer": "",
-    "Battery Model": "",
-    "Inverter Manufacturer": "",
-    "Inverter Model": ""
+    "Battery Manufacturer": "Tesla",
+    "Battery Model": "Megapack 2.0",
+    "Inverter Manufacturer": "Tesla",
+    "Inverter Model": "PCS 2.0"
   },
   {
     "Region": "SA1",
