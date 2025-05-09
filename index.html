@@ -134,7 +134,7 @@
 			max-width: 250px; /* Adjust max-width if needed for longer names */
 			vertical-align: middle; /* ADD or ENSURE this line exists */
 		}
-		
+
 		#relativeTimeControls {
 			display: flex !important;     /* Use !important to override inline style */
 			align-items: center !important; /* Ensure vertical alignment */
@@ -181,15 +181,15 @@
              align-items: center;
              justify-content: center;
         }
-        #status {
+        #status, #batteryInfoStatus {
              font-style: italic;
              color: var(--text-secondary);
              display: inline-block; /* Use inline-block for better alignment */
          }
-        #status[style*="color: var(--error-color)"] { /* Check against CSS variable */
+        #status[style*="color: var(--error-color)"], #batteryInfoStatus[style*="color: var(--error-color)"] { /* Check against CSS variable */
              color: var(--error-color) !important;
         }
-        #loadingSpinner {
+        #loadingSpinner, #batteryInfoLoadingSpinner {
             display: none; /* Controlled by JS */
             font-weight: bold;
             color: var(--accent-primary);
@@ -305,7 +305,7 @@
             </div>
 			<!-- Status/Loading for Chart -->
 			<div class="status-and-loading">
-				<span id="status">Select a Generator to load chart data.</span>
+				<span id="status">Loading page data...</span> <!-- Initial Status -->
 				<span id="loadingSpinner"></span>
 			</div>
             <!-- Relative Time Controls (Always Visible - styled as a grid item) -->
@@ -380,7 +380,7 @@
             </div>
             <!-- Optional: Status/Loading for Battery Info Select -->
              <div class="status-and-loading">
-                 <span id="batteryInfoStatus">Select a Battery for details.</span>
+                 <span id="batteryInfoStatus">Loading battery list...</span> <!-- Initial Status -->
                  <span id="batteryInfoLoadingSpinner" style="display: none;"></span>
              </div>
         </div>
@@ -624,16 +624,16 @@
         const powerChart = new Chart(ctx, chartConfig);
 
         // --- Double Click Reset Listener ---
+        // This listener can remain outside DOMContentLoaded as it only interacts with the chart object itself
         if (powerChart && powerChart.canvas) {
             powerChart.canvas.addEventListener('dblclick', () => {
-                console.log("Chart canvas double-clicked - Resetting zoom and fetching initial range data.");
-                powerChart.resetZoom(); // Reset zoom state
-
-                // Cancel any pending zoom/pan fetch that might have been queued by the resetZoom()
+                console.log("Chart canvas double-clicked - Triggering data fetch and reset.");
+                // **REMOVED:** powerChart.resetZoom(); // Let updateChartWithApiData handle the reset via scales
+                // Cancel any pending zoom/pan fetch that might have been queued
                 debouncedZoomPanFetch.cancel();
-                console.log("Cancelled any pending zoom/pan fetch due to reset.");
+                console.log("Cancelled any pending zoom/pan fetch.");
 
-                // Fetch data based on UI controls after resetting zoom
+                // Fetch data based on UI controls and apply reset logic
                 updateChartWithApiData(true); // Pass flag to indicate explicit reset
             });
         } else {
@@ -688,9 +688,11 @@
 				updateStatus(`Error loading battery list: ${error.message}`, true, 'batteryInfo'); // Update battery info status on error
 				allBatteryDataArray = []; // Ensure array is empty on error
 				batteryMetadataMap.clear(); // Ensure map is empty on error
+                batteryInfoSelect.innerHTML = '<option value="">-- Error Loading List --</option>'; // Set error option
 			} finally {
                  showBatteryInfoLoading(false); // Hide battery info loading spinner
             }
+             return batteryMetadataMap.size > 0; // Return boolean indicating if metadata was successfully loaded and mapped
 		}
 
 		// This function now displays info based on the Generator (DUID) selection
@@ -759,7 +761,7 @@
                     'DUID': 'DUID',
 					'Status': 'Unit Status',
 					'Nameplate Capacity (MW)': 'Nameplate Capacity (MW)',
-					'Storage Capacity (MWh)': 'Storage Capacity (MWh)',
+					'Storage Capacity (MWh)': 'Storage Capacity (MWh)', // Corrected typo from 'MWh)' to 'MWh)'
 					'Commercial Use Date': 'Full Commercial Use Date',
 					'Battery Manufacturer': 'Battery Manufacturer',
 					'Battery Model': 'Battery Model',
@@ -808,6 +810,7 @@
                 console.error("Error fetching generator tags:", error);
                 updateStatus(`Error fetching generators: ${error.message}`, true, 'chart'); // Chart status on error
                 // Return null or an empty array to signal failure
+                generatorSelect.innerHTML = '<option value="">-- Error Loading List --</option>'; // Set error option
                 return null;
             } finally {
                 // showLoading(false); // Loading is handled globally in DOMContentLoaded
@@ -857,7 +860,7 @@
                 })).filter(p => !isNaN(p.x.getTime())); // Filter out points with invalid dates
 
                 updateStatus(`Data loaded: ${chartData.length} points for the range.`, false, 'chart'); // Chart status
-                displayActualRange(chartData); // Update the range display text
+                // displayActualRange(chartData); // Update the range display text - moved to updateChartWithApiData/handleZoomPanFetch success
 
                 return chartData; // Success
 
@@ -865,6 +868,7 @@
                 console.error('API Fetch Error (fetchDataForRange):', error);
                 updateStatus(`Error fetching data for range: ${error.message}`, true, 'chart'); // Chart status on error
                 actualRangeDisplay.textContent = ''; // Clear range display on error
+                actualRangeDisplay.style.display = 'none'; // Hide range display
                 return null; // Indicate failure
             } finally {
                 showLoading(false); // Hide chart loading indicator
@@ -877,6 +881,7 @@
             const timeMode = document.querySelector('input[name="timeRangeMode"]:checked').value;
 
             actualRangeDisplay.textContent = ''; // Clear previous range display
+            actualRangeDisplay.style.display = 'none'; // Hide range display
             showLoading(true); // Chart loading
             updateStatus("Fetching data based on controls...", false, 'chart'); // Chart status
 
@@ -948,7 +953,7 @@
                 })).filter(p => !isNaN(p.x.getTime()));
 
                 updateStatus(`Chart data loaded: ${chartData.length} points.`, false, 'chart'); // Chart status
-                displayActualRange(chartData); // Update the range display text
+                // displayActualRange(chartData); // Update the range display text - moved
 
                 return chartData; // Success
 
@@ -956,6 +961,7 @@
                 console.error('API Fetch Error (fetchDataFromApi):', error);
                 updateStatus(`Error fetching chart data: ${error.message}`, true, 'chart'); // Chart status on error
                 actualRangeDisplay.textContent = '';
+                actualRangeDisplay.style.display = 'none'; // Hide range display on error
                 return null; // Indicate failure
             } finally {
                  showLoading(false); // Hide chart loading
@@ -1005,28 +1011,37 @@
                 // Check if the currently selected generator is actually a battery and has metadata
                 displayGeneratorInfo(selectedGenerator); // Update the generator info section based on the DUID
 
-                // Reset zoom ONLY when called from UI changes/explicit reset, OR if not currently zoomed/panned AND data was returned
-                if (isReset || (!powerChart.isZoomedOrPanned() && chartData.length > 0)) {
-                    console.log("Resetting chart zoom to fit fetched data.");
-                    delete powerChart.options.scales.x.min; // Let Chart.js auto-scale
+                // Handle scale reset only when isReset is true OR if no data was returned
+                // If data was returned and not a manual reset, let the zoom plugin manage scales
+                if (isReset || chartData.length === 0) {
+                    console.log("Resetting chart zoom to fit fetched data or clear.");
+                    // Use update('none') after modifying scales to apply them immediately
+                    delete powerChart.options.scales.x.min;
                     delete powerChart.options.scales.x.max;
                 } else {
-                    console.log("Maintaining current chart zoom level after UI-triggered fetch.");
+                    console.log("Maintaining current chart zoom level after UI-triggered fetch (not reset).");
+                    // Scales options should already be managed by the zoom plugin if not reset.
+                    // No explicit setting needed here.
                 }
 
-                powerChart.update(); // Use default update animation for UI-triggered changes
+                // Always use 'none' for update after data/scale changes triggered by UI controls
+                powerChart.update('none');
+
+                // Update range display based on the data *actually loaded* into the chart
+                displayActualRange(chartData);
+
             } else {
-                // Fetch failed (returned null) or empty data array returned by successful fetch
-                 console.log("Clearing chart data due to fetch error or empty data.");
+                // Fetch failed (returned null)
+                 console.log("Clearing chart data due to fetch error.");
                  powerChart.data.datasets[0].data = [];
                  // Always reset zoom on error/no data to avoid being stuck in an invalid range
                  delete powerChart.options.scales.x.min;
                  delete powerChart.options.scales.x.max;
-                 powerChart.update();
+                 powerChart.update('none'); // Use 'none' for immediate visual clear
+                 displayActualRange([]); // Clear range display
                  // displayGeneratorInfo is already called above and will show 'No info' if DUID not found or data is null.
                  // The status message is updated by fetchDataFromApi on error.
             }
-             // The range display is updated by displayActualRange or cleared on error.
         }
 
         // Handles fetching data when zoom or pan completes.
@@ -1035,6 +1050,7 @@
             if (!selectedGenerator) {
                 console.log("Zoom/Pan fetch skipped: No generator selected.");
                 updateStatus("Select a Generator to enable zooming.", false, 'chart'); // Inform user
+                // Keep the current chart data/state as is, don't clear
                 return;
             }
 
@@ -1044,7 +1060,10 @@
                  updateStatus("Internal chart error.", true, 'chart'); // Chart status
                  return;
             }
-            const { min: initialTargetMin, max: initialTargetMax } = chart.scales.x;
+            // Use chart.scales.x.min/max which reflect the *requested* zoom/pan window
+            const initialTargetMin = chart.scales.x.min;
+            const initialTargetMax = chart.scales.x.max;
+
 
             // Validate initial scales read from the event
             if (initialTargetMin === undefined || initialTargetMax === undefined || typeof initialTargetMin !== 'number' || typeof initialTargetMax !== 'number' || isNaN(initialTargetMin) || isNaN(initialTargetMax)) {
@@ -1052,13 +1071,15 @@
                  // Don't set error status, as this can sometimes happen briefly during chart transitions
                  return;
             }
-            if (initialTargetMin >= initialTargetMax) {
-                console.warn("Zoom/Pan fetch skipped: Invalid initial target time range (min >= max).", initialTargetMin, initialTargetMax);
-                 // Don't set error status
-                return;
-            }
+             // Add check for reversed dates after zoom/pan
+             if (initialTargetMin >= initialTargetMax) {
+                 console.warn("Zoom/Pan fetch skipped: Invalid initial target time range (min >= max).", new Date(initialTargetMin), new Date(initialTargetMax));
+                  // Don't set error status
+                 return;
+             }
 
-            // --- Step 2: Containment/Future Zoom Check ---
+
+            // --- Step 2: Containment Check ---
             let needsFetch = true; // Assume fetch needed unless logic says otherwise
             const currentData = chart.data.datasets[0].data;
 
@@ -1079,40 +1100,28 @@
 
                 // Proceed with check only if a valid range was found in current data
                 if (validDataRangeFound && isFinite(dataMinTimestamp) && isFinite(dataMaxTimestamp)) {
-                    // Add a small tolerance (e.g., 1 minute) to avoid re-fetching when zoomed *exactly* to bounds
-                    const tolerance = 60 * 1000; // 1 minute
-                    const targetMinWithTolerance = initialTargetMin + tolerance;
-                    const targetMaxWithTolerance = initialTargetMax - tolerance;
+                    const tolerance = 60 * 1000; // 1 minute tolerance
 
-                    const isContained = targetMinWithTolerance >= dataMinTimestamp && targetMaxWithTolerance <= dataMaxTimestamp;
+                    // Determine if a fetch is needed:
+                    // Fetch if the target range extends BEFORE the current data start
+                    // OR if the target range extends AFTER the current data end.
+                    needsFetch = initialTargetMin < dataMinTimestamp - tolerance || initialTargetMax > dataMaxTimestamp + tolerance;
 
-                    // Check if zooming past the end, but starting within
-                    const startsWithinCurrentData = initialTargetMin >= dataMinTimestamp - tolerance; // Allow slight overlap
-                    const endsBeyondCurrentData = initialTargetMax > dataMaxTimestamp + tolerance; // Check beyond tolerance
-
-                    if (isContained) {
-                        console.log(`Containment Check: Target is fully within current data range (with tolerance). Skipping fetch.`);
-                        needsFetch = false;
-                         // Update range display to show the currently displayed range, not the requested zoom range
-                         displayActualRange(currentData);
-                    } else if (startsWithinCurrentData && endsBeyondCurrentData) {
-                         // This covers zooming further into the future beyond the last data point
-                         console.log(`Containment Check: Target zooms past end of data but starts within. Skipping fetch.`);
-                         needsFetch = false;
-                         // Update range display to show the currently displayed range
-                         displayActualRange(currentData);
+                    if (needsFetch) {
+                         console.log(`Containment Check: Target range (${new Date(initialTargetMin).toISOString()} - ${new Date(initialTargetMax).toISOString()}) extends beyond current data range (${new Date(dataMinTimestamp).toISOString()} - ${new Date(dataMaxTimestamp).toISOString()}). Fetch required.`);
                     } else {
-                        // All other cases (panning left, zooming out, panning right beyond current data) require a fetch.
-                        console.log(`Containment Check: Target is outside current data range (not just future zoom). Fetch required.`);
-                        needsFetch = true;
+                         console.log(`Containment Check: Target range (${new Date(initialTargetMin).toISOString()} - ${new Date(initialTargetMax).toISOString()}) is fully within current data range (${new Date(dataMinTimestamp).toISOString()} - ${new Date(dataMaxTimestamp).toISOString()}, with tolerance). Skipping fetch.`);
+                         // If we skipped fetch, the data hasn't changed, so display the range of the existing data points.
+                         displayActualRange(currentData);
                     }
+
                 } else {
                     console.log("Containment Check: Not enough data points in current view. Fetch required.");
-                    needsFetch = true;
+                    needsFetch = true; // Always fetch if there's no data loaded
                 }
             } else {
                 console.log("Containment Check: Not enough data points. Fetch required.");
-                needsFetch = true;
+                needsFetch = true; // Always fetch if there's no data loaded
             }
 
             // Exit now if the checks determined no fetch is needed
@@ -1131,42 +1140,40 @@
             if (chartData === null) {
                 console.error("fetchDataForRange returned null (error). Aborting update.");
                 // The error status is already set by fetchDataForRange
+                // Keep the chart state as is on fetch error during zoom/pan? Or clear?
+                // Clearing might be jarring. Let's keep existing data but stop processing.
                 return; // Stop processing if fetch failed
             }
 
             // --- Step 4: Process fetch result ---
             console.log("Processing fetched data.");
             try {
-                // Merge new data with existing data if desired, or replace.
-                // Replacing is simpler and often sufficient for dense time series. Let's replace.
-                // If merging were needed, you'd combine currentData and chartData, sort, and remove duplicates.
-                powerChart.data.datasets[0].data = chartData; // Replace with newly fetched data
+                // Replace the current data with the newly fetched data for the visible range.
+                powerChart.data.datasets[0].data = chartData;
 
                 if (chartData.length > 0) {
                     console.log(`Applying ${chartData.length} fetched points.`);
-
-                    // Adjust scales based on the *requested* zoom range, not the fetched data range.
-                    // This ensures the chart remains focused on where the user zoomed/panned.
-                    chart.options.scales.x.min = initialTargetMin; // Use the requested start time
-                    chart.options.scales.x.max = initialTargetMax; // Use the requested end time
-
+                    // Scales are already set by the zoom plugin to initialTargetMin/Max.
+                    // We just need to update.
                 } else {
                      // API returned an empty array for the fetched range
                      console.log("API returned no data for the fetched range. Chart data is now empty.");
                      // Keep the scales where the user zoomed/panned to see the empty range.
-                     // Scales already match the requested range (initialTargetMin/Max).
+                     // No explicit scale adjustment needed here.
                 }
 
                 // Update chart *without* animation after zoom/pan fetch
                 console.log("Calling chart update directly ('none') after processing fetch.");
-                powerChart.update('none');
-                console.log("Direct chart update completed.");
-                displayActualRange(chartData); // Update range display based on *fetched* data (or empty message)
+                powerChart.update('none'); // Use 'none' for immediate redraw
+
+                // Update range display based on the data *actually loaded* into the chart
+                displayActualRange(chartData);
 
 
             } catch (error) {
                 console.error("Error processing fetched data / adjusting scales:", error);
                 updateStatus("Error updating chart after zoom/pan", true, 'chart'); // Chart status
+                 displayActualRange([]); // Clear range display on error during processing
             }
 
             console.log("handleZoomPanFetch function completed.");
@@ -1175,66 +1182,9 @@
 		// Create a debounced version of the zoom/pan fetch handler
         const debouncedZoomPanFetch = debounce(handleZoomPanFetch, ZOOM_PAN_DEBOUNCE_MS);
 
-        // --- Event Listeners ---
+        // --- Event Listeners (MOVED INSIDE DOMContentLoaded) ---
+        // These listeners will now be attached only after the initial async setup completes.
 
-        // Generator selection triggers data fetch (resetting zoom)
-        generatorSelect.addEventListener('change', (event) => {
-            const selectedValue = event.target.value;
-            if (selectedValue) {
-                console.log(`Generator selected: ${selectedValue} - Fetching data...`);
-                updateChartWithApiData(true); // Fetch data and RESET zoom
-                // The displayGeneratorInfo call is now inside updateChartWithApiData
-            } else {
-                console.log("Placeholder selected (Generator), clearing chart data and info.");
-                if (powerChart) {
-                    powerChart.data.datasets[0].data = [];
-                    powerChart.options.plugins.title.text = `Battery Power: N/A`; // Reset title
-                    delete powerChart.options.scales.x.min; // Reset zoom on deselect
-                    delete powerChart.options.scales.x.max;
-                    powerChart.update();
-                }
-                updateStatus("Select a Generator to view chart data.", false, 'chart'); // Chart status
-                actualRangeDisplay.textContent = ''; // Clear range display
-				displayGeneratorInfo(null); // Hide generator info section
-            }
-        });
-
-        // NEW: Battery Info selection triggers displaying info
-        batteryInfoSelect.addEventListener('change', (event) => {
-             const selectedSiteName = event.target.value;
-             console.log(`Battery Info Site selected: ${selectedSiteName}`);
-             displayAllBatteryInfo(selectedSiteName);
-        });
-
-
-        // Time range mode change triggers data fetch (resetting zoom)
-        timeRangeModeRadios.forEach(radio => {
-            radio.addEventListener('change', function() {
-                const isRelative = (this.value === 'relative');
-                relativeTimeControls.style.display = isRelative ? 'flex' : 'none'; // Use flex for control-group
-                absoluteTimeControls.style.display = isRelative ? 'none' : 'grid';
-
-                if(generatorSelect.value) { // Only fetch if a generator is selected for the chart
-                    updateChartWithApiData(true); // Fetch data and RESET zoom
-                }
-            });
-        });
-
-        // Helper to check if both absolute dates are validly set
-        const areAbsoluteDatesSet = () => startTimeInput.value && endTimeInput.value;
-
-        // Relative time range selection triggers data fetch (resetting zoom)
-        timeRangeSelect.addEventListener('change', () => {
-            if(generatorSelect.value) { updateChartWithApiData(true); }
-        });
-
-        // Absolute time changes trigger data fetch (resetting zoom)
-        startTimeInput.addEventListener('change', () => {
-            if(generatorSelect.value && areAbsoluteDatesSet()) { updateChartWithApiData(true); }
-        });
-        endTimeInput.addEventListener('change', () => {
-            if(generatorSelect.value && areAbsoluteDatesSet()) { updateChartWithApiData(true); }
-        });
 
 		// --- Initial Setup ---
          document.addEventListener('DOMContentLoaded', async () => {
@@ -1247,7 +1197,7 @@
              relativeTimeControls.style.display = (initialTimeMode === 'relative') ? 'flex' : 'none'; // Use flex for control-group
              absoluteTimeControls.style.display = (initialTimeMode === 'absolute') ? 'grid' : 'none';
 
-             // Set loading states for both dropdowns initially
+             // Set loading states for both dropdowns initially (already done in HTML, reinforced here)
              generatorSelect.innerHTML = '<option value="">Loading Generators...</option>'; // Chart generator dropdown
              batteryInfoSelect.innerHTML = '<option value="">Loading Batteries...</option>'; // Battery Info dropdown
 
@@ -1294,12 +1244,13 @@
                      }
                  } else {
                      console.error("Failed to get a valid generator DUID list.");
-                     generatorSelect.innerHTML = '<option value="">-- Error Loading List --</option>';
                      // Error status already set by fetchGeneratorTags
                  }
 
                  // --- Populate Battery Info Dropdown (JSON) ---
-                 batteryInfoSelect.innerHTML = ''; // Clear loading message
+                 // This is now handled *after* fetchBatteryMetadata completes,
+                 // but inside the try block before attaching listeners
+                 batteryInfoSelect.innerHTML = ''; // Clear loading message if successful
                  if (allBatteryDataArray.length > 0) {
                       const defaultOption = document.createElement('option');
                       defaultOption.value = "";
@@ -1318,12 +1269,85 @@
                        updateStatus(`Battery list loaded (${allBatteryDataArray.length} found). Select one for details.`, false, 'batteryInfo'); // Battery info status
                  } else {
                       console.warn("No battery metadata loaded or array is empty.");
-                      batteryInfoSelect.innerHTML = '<option value="">-- No Batteries Found --</option>';
-                      // Error status already set by fetchBatteryMetadata if it failed
+                      // Error status already set by fetchBatteryMetadata if it failed and populated the error option
+                       if(batteryInfoSelect.options.length <= 1 && !batteryInfoSelect.value) {
+                            batteryInfoSelect.innerHTML = '<option value="">-- No Batteries Found --</option>';
+                       }
                       if (!batteryInfoStatus.textContent.includes("Error")) { // Avoid overwriting specific fetch error
                            updateStatus("Could not load battery list from metadata file.", true, 'batteryInfo'); // Battery info status
                       }
                  }
+
+                // --- Attach Event Listeners NOW, AFTER async setup completes ---
+
+                // Generator selection triggers data fetch (resetting zoom)
+                generatorSelect.addEventListener('change', (event) => {
+                    const selectedValue = event.target.value;
+                    if (selectedValue) {
+                        console.log(`Generator selected: ${selectedValue} - Fetching data...`);
+                        updateChartWithApiData(true); // Fetch data and RESET zoom
+                        // The displayGeneratorInfo call is now inside updateChartWithApiData
+                    } else {
+                        console.log("Placeholder selected (Generator), clearing chart data and info.");
+                        if (powerChart) { // Ensure chart exists
+                            powerChart.data.datasets[0].data = [];
+                            powerChart.options.plugins.title.text = `Battery Power: N/A`;
+                            delete powerChart.options.scales.x.min;
+                            delete powerChart.options.scales.x.max;
+                            powerChart.update('none');
+                        }
+                        updateStatus("Select a Generator to view chart data.", false, 'chart');
+                        actualRangeDisplay.textContent = '';
+                        actualRangeDisplay.style.display = 'none';
+                        displayGeneratorInfo(null);
+                    }
+                });
+
+                // NEW: Battery Info selection triggers displaying info
+                batteryInfoSelect.addEventListener('change', (event) => {
+                    const selectedSiteName = event.target.value;
+                    console.log(`Battery Info Site selected: ${selectedSiteName}`);
+                    displayAllBatteryInfo(selectedSiteName);
+                });
+
+                // Time range mode change triggers data fetch (resetting zoom)
+                timeRangeModeRadios.forEach(radio => {
+                    radio.addEventListener('change', function() {
+                        const isRelative = (this.value === 'relative');
+                        relativeTimeControls.style.display = isRelative ? 'flex' : 'none'; // Use flex for control-group
+                        absoluteTimeControls.style.display = isRelative ? 'none' : 'grid';
+
+                        if(generatorSelect.value) { // Only fetch if a generator is selected for the chart
+                            updateChartWithApiData(true); // Fetch data and RESET zoom
+                        }
+                    });
+                });
+
+                // Helper to check if both absolute dates are validly set
+                const areAbsoluteDatesSet = () => startTimeInput.value && endTimeInput.value;
+
+                // Relative time range selection triggers data fetch (resetting zoom)
+                timeRangeSelect.addEventListener('change', () => {
+                    if(generatorSelect.value) { updateChartWithApiData(true); }
+                });
+
+                // Absolute time changes trigger data fetch (resetting zoom)
+                startTimeInput.addEventListener('change', () => {
+                    if(generatorSelect.value && areAbsoluteDatesSet()) { updateChartWithApiData(true); }
+                });
+                endTimeInput.addEventListener('change', () => {
+                    if(generatorSelect.value && areAbsoluteDatesSet()) { updateChartWithApiData(true); }
+                });
+
+                // Optional: Trigger an initial fetch if a generator was pre-selected (unlikely with default "-- Select --")
+                // if (generatorSelect.value) {
+                //      updateChartWithApiData(true);
+                // } else {
+                     // Set final default status message after setup
+                     if(!statusDiv.textContent.includes("Error") && !loadingSpinner.style.display === 'inline-block') {
+                          updateStatus("Select a Generator to view chart data.", false, 'chart');
+                     }
+                // }
 
 
              } catch (error) {
