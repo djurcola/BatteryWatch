@@ -228,6 +228,32 @@ class CollectorServiceTests(unittest.TestCase):
             ("NSW1", "QLD1", "SA1", "TAS1", "VIC1"),
         )
 
+    def test_price_cycle_preserves_explicit_historical_source_url(self) -> None:
+        captured: list[CapturingPriceIngestor] = []
+
+        def ingestor_factory(connection):
+            ingestor = CapturingPriceIngestor(connection)
+            captured.append(ingestor)
+            return ingestor
+
+        run_price_collection_cycle(
+            object(),
+            collect=lambda **kwargs: price_collection(),
+            ingestor_factory=ingestor_factory,
+            receipt_source_url=(
+                "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/"
+                "PUBLIC_DISPATCHIS_20260829.zip#PUBLIC_DISPATCHIS_202608291405_123.zip"
+            ),
+        )
+
+        assert captured[0].call is not None
+        receipt, _ = captured[0].call
+        self.assertEqual(
+            receipt.source_url,
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/"
+            "PUBLIC_DISPATCHIS_20260829.zip#PUBLIC_DISPATCHIS_202608291405_123.zip",
+        )
+
     def test_database_cycle_closes_connection_when_ingestion_fails(self) -> None:
         connection = ClosingConnection()
         failure = RuntimeError("database write failed")

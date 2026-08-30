@@ -185,6 +185,7 @@ def run_price_collection_cycle(
     *,
     collect: Callable[..., DispatchPriceCollection] = collect_latest_dispatch_prices,
     ingestor_factory: Callable[[Any], _PriceIngestor] = PostgreSQLDispatchPriceIngestor,
+    receipt_source_url: str | None = None,
 ) -> DispatchPriceIngestionResult:
     """Fetch, validate, and atomically persist one official DispatchIS artifact."""
 
@@ -199,7 +200,7 @@ def run_price_collection_cycle(
         raise ValueError("invalid DispatchIS artifact version")
     receipt = DispatchPriceArtifactReceipt(
         source_artifact_id=reference.source_artifact_id,
-        source_url=reference.url,
+        source_url=(reference.url if receipt_source_url is None else receipt_source_url),
         zip_filename=reference.zip_filename,
         csv_member_name=artifact.csv_member_name,
         report_timestamp=reference.report_timestamp,
