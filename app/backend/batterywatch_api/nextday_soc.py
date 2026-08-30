@@ -12,7 +12,8 @@ from typing import Literal
 
 _NEM_TIMEZONE = timezone(timedelta(hours=10))
 _METADATA_PREFIX = ("C", "NEMP.WORLD", "NEXT_DAY_DISPATCH", "AEMO", "PUBLIC")
-_TABLE_PREFIX = ("DISPATCH", "UNIT_SOLUTION", "6")
+_TABLE_PREFIX = ("DISPATCH", "UNIT_SOLUTION")
+_ACCEPTED_TABLE_VERSIONS = frozenset(("5", "6"))
 _REQUIRED_COLUMNS = frozenset(
     (
         "SETTLEMENTDATE",
@@ -139,7 +140,7 @@ def parse_nextday_unit_solution_soc(
     ingestion_version: int,
     correction_version: int = 0,
 ) -> tuple[NextDaySocObservation, ...]:
-    """Parse current public Next Day UnitSolution v6 rows for reviewed DUIDs."""
+    """Parse public Next Day UnitSolution v5/v6 rows for reviewed DUIDs."""
 
     if type(payload) is not str or not payload:
         raise NextDaySocParseError("invalid payload")
@@ -161,6 +162,7 @@ def parse_nextday_unit_solution_soc(
     downloaded = _validated_downloaded_at(downloaded_at, report_timestamp)
 
     header: list[str] | None = None
+    table_identity: tuple[str, ...] | None = None
     observations: list[NextDaySocObservation] = []
     seen: set[tuple[str, datetime, int, int]] = set()
     report_record_count = 1
@@ -178,16 +180,24 @@ def parse_nextday_unit_solution_soc(
                 )
                 continue
 
-            if row[:4] == ["I", *_TABLE_PREFIX]:
+            if row[:3] == ["I", *_TABLE_PREFIX]:
+                if len(row) < 4 or row[3] not in _ACCEPTED_TABLE_VERSIONS:
+                    raise NextDaySocParseError("unsupported UnitSolution version")
                 if header is not None or len(row) != len(set(row)):
                     raise NextDaySocParseError("invalid UnitSolution header")
                 if not _REQUIRED_COLUMNS.issubset(row[4:]):
                     raise NextDaySocParseError("missing UnitSolution columns")
                 header = row
+                table_identity = tuple(row[1:4])
                 continue
-            if row[:4] != ["D", *_TABLE_PREFIX]:
+            if row[:3] != ["D", *_TABLE_PREFIX]:
                 continue
-            if header is None or len(row) != len(header):
+            if (
+                header is None
+                or table_identity is None
+                or tuple(row[1:4]) != table_identity
+                or len(row) != len(header)
+            ):
                 raise NextDaySocParseError("malformed UnitSolution row")
             values = dict(zip(header[4:], row[4:]))
             duid = values["DUID"]
@@ -235,7 +245,7 @@ def parse_nextday_unit_solution_soc(
     if expected_count != report_record_count:
         raise NextDaySocParseError("report row count mismatch")
     if header is None:
-        raise NextDaySocParseError("missing UnitSolution v6 table")
+        raise NextDaySocParseError("missing UnitSolution v5/v6 table")
     return tuple(
         sorted(
             observations,

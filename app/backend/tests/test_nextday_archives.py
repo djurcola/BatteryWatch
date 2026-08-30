@@ -75,6 +75,33 @@ class NextDayArchiveDiscoveryTests(unittest.TestCase):
         )
         self.assertEqual(plan.missing_months, (date(2025, 9, 1),))
 
+    def test_plans_months_using_the_nem_0405_report_day_cutoff(self) -> None:
+        references = discover_nextday_monthly_archives(
+            INDEX_HTML,
+            index_url=NEXTDAY_ARCHIVE_INDEX_URL,
+        )
+        cases = (
+            (
+                datetime(2025, 7, 31, 18, 0, tzinfo=UTC),
+                datetime(2025, 7, 31, 18, 1, tzinfo=UTC),
+                date(2025, 7, 1),
+            ),
+            (
+                datetime(2025, 7, 31, 18, 5, tzinfo=UTC),
+                datetime(2025, 7, 31, 18, 6, tzinfo=UTC),
+                date(2025, 8, 1),
+            ),
+        )
+
+        for start, end, expected_month in cases:
+            with self.subTest(start=start):
+                plan = plan_nextday_monthly_archives(start, end, references)
+                self.assertEqual(
+                    tuple(item.report_month for item in plan.items),
+                    (expected_month,),
+                )
+                self.assertEqual(plan.missing_months, ())
+
     def test_rejects_malformed_duplicate_and_oversized_listing_rows(self) -> None:
         malformed_cases = (
             INDEX_HTML.replace(

@@ -190,11 +190,53 @@ def _next_month(value: date) -> date:
     )
 
 
+def _report_date_for_interval(value: datetime) -> date:
+    local = value.astimezone(_NEM_TIMEZONE)
+    return (
+        local.date() - timedelta(days=1)
+        if (local.hour, local.minute) <= (4, 0)
+        else local.date()
+    )
+
+
+def nextday_report_date_bounds(
+    start: datetime,
+    end: datetime,
+) -> tuple[date, date] | None:
+    """Return report-date bounds containing aligned five-minute intervals."""
+
+    start_utc = _strict_utc(start, "start")
+    end_utc = _strict_utc(end, "end")
+    if end_utc <= start_utc:
+        raise NextDayArchiveError("Next Day archive range must be increasing")
+    first_interval = start_utc.replace(
+        minute=start_utc.minute - (start_utc.minute % 5),
+        second=0,
+        microsecond=0,
+    )
+    if first_interval < start_utc:
+        first_interval += timedelta(minutes=5)
+    end_probe = end_utc - timedelta(microseconds=1)
+    last_interval = end_probe.replace(
+        minute=end_probe.minute - (end_probe.minute % 5),
+        second=0,
+        microsecond=0,
+    )
+    if first_interval > last_interval:
+        return None
+    return (
+        _report_date_for_interval(first_interval),
+        _report_date_for_interval(last_interval),
+    )
+
+
 def _intersecting_months(start: datetime, end: datetime) -> tuple[date, ...]:
-    first_local = start.astimezone(_NEM_TIMEZONE)
-    last_local = (end - timedelta(microseconds=1)).astimezone(_NEM_TIMEZONE)
-    current = date(first_local.year, first_local.month, 1)
-    last = date(last_local.year, last_local.month, 1)
+    bounds = nextday_report_date_bounds(start, end)
+    if bounds is None:
+        return ()
+    first_report, last_report = bounds
+    current = date(first_report.year, first_report.month, 1)
+    last = date(last_report.year, last_report.month, 1)
     months: list[date] = []
     while current <= last:
         months.append(current)
@@ -259,5 +301,6 @@ __all__ = [
     "NextDayMonthlyArchivePlan",
     "NextDayMonthlyArchiveRef",
     "discover_nextday_monthly_archives",
+    "nextday_report_date_bounds",
     "plan_nextday_monthly_archives",
 ]

@@ -9,6 +9,12 @@ from batterywatch_api.nextday_soc import NextDaySocParseError, parse_nextday_uni
 
 UTC = timezone.utc
 FIXTURE = Path(__file__).parent / "fixtures" / "historical" / "nextday-unit-solution-soc-20260829-reduced.csv"
+V5_FIXTURE = (
+    Path(__file__).parent
+    / "fixtures"
+    / "historical"
+    / "nextday-unit-solution-soc-v5-20250701-reduced.csv"
+)
 
 
 class NextDaySocParserTests(unittest.TestCase):
@@ -56,13 +62,40 @@ class NextDaySocParserTests(unittest.TestCase):
         self.assertEqual(len(observations), 2)
         self.assertEqual({item.duid for item in observations}, {"ADPBA1"})
 
+    def test_parses_real_derived_v5_initial_energy_storage(self) -> None:
+        observations = parse_nextday_unit_solution_soc(
+            V5_FIXTURE.read_text(encoding="utf-8"),
+            duids=frozenset(("ADPBA1",)),
+            source_artifact_id=(
+                "5c3653d787824f5250210de11f67a6ff"
+                "334433894016290e45952046d84576f4"
+            ),
+            downloaded_at=datetime(2026, 8, 30, tzinfo=UTC),
+            ingestion_version=8,
+            correction_version=47_012_9643,
+        )
+
+        self.assertEqual(len(observations), 1)
+        observation = observations[0]
+        self.assertEqual(observation.duid, "ADPBA1")
+        self.assertEqual(observation.soc_mwh, 0.0)
+        self.assertEqual(
+            observation.interval_start,
+            datetime(2025, 6, 30, 18, 5, tzinfo=UTC),
+        )
+        self.assertEqual(
+            observation.report_timestamp,
+            datetime(2025, 7, 1, 18, 10, tzinfo=UTC),
+        )
+        self.assertEqual(observation.publication_latency_seconds, 86_700)
+
     def test_rejects_wrong_version_duplicate_rows_and_bad_trailer_count(self) -> None:
         duplicate = self.payload.replace(
             'C,"END OF REPORT",6',
             self.payload.splitlines()[2] + '\nC,"END OF REPORT",7',
         )
         cases = (
-            self.payload.replace("I,DISPATCH,UNIT_SOLUTION,6,", "I,DISPATCH,UNIT_SOLUTION,5,", 1),
+            self.payload.replace("I,DISPATCH,UNIT_SOLUTION,6,", "I,DISPATCH,UNIT_SOLUTION,4,", 1),
             duplicate,
             self.payload.replace('C,"END OF REPORT",6', 'C,"END OF REPORT",7'),
         )
@@ -70,6 +103,15 @@ class NextDaySocParserTests(unittest.TestCase):
             with self.subTest(payload=payload[-80:]):
                 with self.assertRaises(NextDaySocParseError):
                     self.parse(payload)
+
+    def test_rejects_mixed_accepted_unit_solution_versions(self) -> None:
+        mixed = self.payload.replace(
+            "I,DISPATCH,UNIT_SOLUTION,6,",
+            "I,DISPATCH,UNIT_SOLUTION,5,",
+            1,
+        )
+        with self.assertRaises(NextDaySocParseError):
+            self.parse(mixed)
 
     def test_rejects_negative_nonfinite_or_misaligned_authoritative_values(self) -> None:
         cases = (
