@@ -29,9 +29,11 @@ psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/003_dispatch_price_artifacts.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/004_historical_backfill_ledger.sql"
+psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
+  --file="$app_dir/migrations/005_historical_source_artifacts.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 --tuples-only --no-align \
   <<'SQL'
-SELECT count(*) = 10
+SELECT count(*) = 12
 FROM information_schema.tables
 WHERE table_schema = 'public'
   AND table_name IN (
@@ -39,7 +41,8 @@ WHERE table_schema = 'public'
     'dispatch_scada_artifacts', 'raw_dispatch_scada_observations',
     'dispatch_price_artifacts',
     'historical_backfill_runs',
-    'historical_backfill_items', 'historical_backfill_events'
+    'historical_backfill_items', 'historical_backfill_events',
+    'historical_source_artifacts', 'historical_backfill_item_artifacts'
   );
 SQL
 unset database_url

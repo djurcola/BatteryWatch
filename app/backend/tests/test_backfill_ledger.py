@@ -83,8 +83,8 @@ class BackfillLedgerMigrationTests(unittest.TestCase):
             self.assertIn(f"'{table}'", migrate_script)
 
         self.assertIn("004_historical_backfill_ledger.sql", migrate_script)
-        self.assertIn("SELECT count(*) = 10", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 5)
+        self.assertIn("SELECT count(*) = 12", migrate_script)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 6)
         self.assertIn("ON DELETE RESTRICT", migration)
         self.assertIn("event_seq BIGSERIAL PRIMARY KEY", migration)
         self.assertIn("historical_backfill_items_claim_idx", migration)
