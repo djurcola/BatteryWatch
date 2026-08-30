@@ -16,14 +16,24 @@ _INDEX_URLS = frozenset((
     "https://www.nemweb.com.au/REPORTS/CURRENT/Dispatch_SCADA/",
     "https://www.nemweb.com.au/REPORTS/CURRENT/DispatchIS_Reports/",
 ))
-_MAX_RESOURCE_BYTES = 16 * 1024 * 1024
-_ARTIFACT_PATH_RE = re.compile(
+_CURRENT_RESOURCE_MAX_BYTES = 16 * 1024 * 1024
+_ARCHIVE_RESOURCE_MAX_BYTES = 128 * 1024 * 1024
+_CURRENT_ARTIFACT_PATH_RE = re.compile(
     r"(?:"
     r"/REPORTS/CURRENT/Dispatch_SCADA/"
     r"PUBLIC_DISPATCHSCADA_[0-9]{12}_[0-9]{1,32}\.zip"
     r"|"
     r"/REPORTS/CURRENT/DispatchIS_Reports/"
     r"PUBLIC_DISPATCHIS_[0-9]{12}_[0-9]{1,32}\.zip"
+    r")"
+)
+_ARCHIVE_ARTIFACT_PATH_RE = re.compile(
+    r"(?:"
+    r"/REPORTS/ARCHIVE/Dispatch_SCADA/"
+    r"PUBLIC_DISPATCHSCADA_[0-9]{8}\.zip"
+    r"|"
+    r"/REPORTS/ARCHIVE/DispatchIS_Reports/"
+    r"PUBLIC_DISPATCHIS_[0-9]{8}\.zip"
     r")"
 )
 
@@ -81,20 +91,25 @@ def fetch_nemweb_resource(
     """Fetch one NEMWeb resource through an injectable HTTPS opener."""
 
     valid_url = False
+    resource_max_bytes = _CURRENT_RESOURCE_MAX_BYTES
     if type(url) is str:
         try:
             parts = urlsplit(url)
         except ValueError as error:
             raise NemwebHttpError("invalid NEMWeb request") from error
+        current_artifact = _CURRENT_ARTIFACT_PATH_RE.fullmatch(parts.path) is not None
+        archive_artifact = _ARCHIVE_ARTIFACT_PATH_RE.fullmatch(parts.path) is not None
         valid_url = url in _INDEX_URLS or (
             parts.scheme == "https"
             and parts.netloc == "www.nemweb.com.au"
             and not parts.query
             and not parts.fragment
-            and _ARTIFACT_PATH_RE.fullmatch(parts.path) is not None
+            and (current_artifact or archive_artifact)
         )
+        if archive_artifact:
+            resource_max_bytes = _ARCHIVE_RESOURCE_MAX_BYTES
     valid_limit = (
-        type(max_bytes) is int and 0 < max_bytes <= _MAX_RESOURCE_BYTES
+        type(max_bytes) is int and 0 < max_bytes <= resource_max_bytes
     )
     valid_timeout = (
         (type(timeout_seconds) is int and 0 < timeout_seconds <= 60)

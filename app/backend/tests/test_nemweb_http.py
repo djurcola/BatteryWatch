@@ -18,6 +18,14 @@ PRICE_INDEX_URL = "https://www.nemweb.com.au/REPORTS/CURRENT/DispatchIS_Reports/
 PRICE_ARTIFACT_URL = (
     PRICE_INDEX_URL + "PUBLIC_DISPATCHIS_202608301205_0000000535164870.zip"
 )
+SCADA_ARCHIVE_URL = (
+    "https://www.nemweb.com.au/REPORTS/ARCHIVE/Dispatch_SCADA/"
+    "PUBLIC_DISPATCHSCADA_20260829.zip"
+)
+PRICE_ARCHIVE_URL = (
+    "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/"
+    "PUBLIC_DISPATCHIS_20260829.zip"
+)
 
 
 class FakeResponse:
@@ -79,6 +87,34 @@ class ReadErrorResponse(FakeResponse):
 
 
 class FetchNemwebResourceTests(unittest.TestCase):
+    def test_current_resources_retain_sixteen_mib_limit(self) -> None:
+        opener = FakeOpener(FakeResponse(b"small current response"))
+
+        with self.assertRaises(http.NemwebHttpError):
+            http.fetch_nemweb_resource(
+                INDEX_URL,
+                max_bytes=16 * 1024 * 1024 + 1,
+                opener=opener,
+            )
+
+        self.assertEqual(opener.calls, [])
+
+    def test_fetches_canonical_daily_archives_with_outer_bound(self) -> None:
+        limit = 128 * 1024 * 1024
+        for url in (SCADA_ARCHIVE_URL, PRICE_ARCHIVE_URL):
+            with self.subTest(url=url):
+                response = FakeResponse(b"PK daily archive", url=url)
+                opener = FakeOpener(response)
+
+                result = http.fetch_nemweb_resource(
+                    url,
+                    max_bytes=limit,
+                    opener=opener,
+                )
+
+                self.assertEqual((result.requested_url, result.body), (url, response._body))
+                self.assertEqual(response.read_sizes, [limit + 1])
+
     def test_fetches_official_dispatch_price_index_and_artifact(self) -> None:
         for url, body in (
             (PRICE_INDEX_URL, b"<html>price index</html>"),
@@ -221,7 +257,7 @@ class FetchNemwebResourceTests(unittest.TestCase):
             ("https://www.nemweb.com.au/REPORTS/CURRENT/Dispatch_SCADA/not-canonical.zip", 1024, 10.0),
             (INDEX_URL, True, 10.0),
             (INDEX_URL, 0, 10.0),
-            (INDEX_URL, 16 * 1024 * 1024 + 1, 10.0),
+            (INDEX_URL, 128 * 1024 * 1024 + 1, 10.0),
             (INDEX_URL, 1024, True),
             (INDEX_URL, 1024, 0.0),
             (INDEX_URL, 1024, 61.0),
