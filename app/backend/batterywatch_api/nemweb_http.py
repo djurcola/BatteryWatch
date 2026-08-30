@@ -15,9 +15,11 @@ _USER_AGENT = "BatteryWatch-Collector/0.1"
 _INDEX_URLS = frozenset((
     "https://www.nemweb.com.au/REPORTS/CURRENT/Dispatch_SCADA/",
     "https://www.nemweb.com.au/REPORTS/CURRENT/DispatchIS_Reports/",
+    "https://www.nemweb.com.au/REPORTS/ARCHIVE/Next_Day_Dispatch/",
 ))
 _CURRENT_RESOURCE_MAX_BYTES = 16 * 1024 * 1024
 _ARCHIVE_RESOURCE_MAX_BYTES = 128 * 1024 * 1024
+_MONTHLY_ARCHIVE_RESOURCE_MAX_BYTES = 256 * 1024 * 1024
 _CURRENT_ARTIFACT_PATH_RE = re.compile(
     r"(?:"
     r"/REPORTS/CURRENT/Dispatch_SCADA/"
@@ -35,6 +37,10 @@ _ARCHIVE_ARTIFACT_PATH_RE = re.compile(
     r"/REPORTS/ARCHIVE/DispatchIS_Reports/"
     r"PUBLIC_DISPATCHIS_[0-9]{8}\.zip"
     r")"
+)
+_MONTHLY_ARCHIVE_ARTIFACT_PATH_RE = re.compile(
+    r"/REPORTS/ARCHIVE/Next_Day_Dispatch/"
+    r"PUBLIC_NEXT_DAY_DISPATCH_[0-9]{6}01\.zip"
 )
 
 
@@ -99,14 +105,19 @@ def fetch_nemweb_resource(
             raise NemwebHttpError("invalid NEMWeb request") from error
         current_artifact = _CURRENT_ARTIFACT_PATH_RE.fullmatch(parts.path) is not None
         archive_artifact = _ARCHIVE_ARTIFACT_PATH_RE.fullmatch(parts.path) is not None
+        monthly_archive_artifact = (
+            _MONTHLY_ARCHIVE_ARTIFACT_PATH_RE.fullmatch(parts.path) is not None
+        )
         valid_url = url in _INDEX_URLS or (
             parts.scheme == "https"
             and parts.netloc == "www.nemweb.com.au"
             and not parts.query
             and not parts.fragment
-            and (current_artifact or archive_artifact)
+            and (current_artifact or archive_artifact or monthly_archive_artifact)
         )
-        if archive_artifact:
+        if monthly_archive_artifact:
+            resource_max_bytes = _MONTHLY_ARCHIVE_RESOURCE_MAX_BYTES
+        elif archive_artifact:
             resource_max_bytes = _ARCHIVE_RESOURCE_MAX_BYTES
     valid_limit = (
         type(max_bytes) is int and 0 < max_bytes <= resource_max_bytes

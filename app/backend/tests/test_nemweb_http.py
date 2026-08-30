@@ -26,6 +26,12 @@ PRICE_ARCHIVE_URL = (
     "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/"
     "PUBLIC_DISPATCHIS_20260829.zip"
 )
+NEXTDAY_INDEX_URL = (
+    "https://www.nemweb.com.au/REPORTS/ARCHIVE/Next_Day_Dispatch/"
+)
+NEXTDAY_MONTHLY_ARCHIVE_URL = (
+    NEXTDAY_INDEX_URL + "PUBLIC_NEXT_DAY_DISPATCH_20250701.zip"
+)
 
 
 class FakeResponse:
@@ -114,6 +120,38 @@ class FetchNemwebResourceTests(unittest.TestCase):
 
                 self.assertEqual((result.requested_url, result.body), (url, response._body))
                 self.assertEqual(response.read_sizes, [limit + 1])
+
+    def test_fetches_nextday_index_and_monthly_archive_with_dedicated_bound(self) -> None:
+        index_opener = FakeOpener(
+            FakeResponse(b"<html>next day index</html>", url=NEXTDAY_INDEX_URL)
+        )
+        index = http.fetch_nemweb_resource(
+            NEXTDAY_INDEX_URL,
+            max_bytes=64 * 1024,
+            opener=index_opener,
+        )
+        self.assertEqual(index.body, b"<html>next day index</html>")
+
+        limit = 256 * 1024 * 1024
+        response = FakeResponse(
+            b"PK monthly Next Day archive",
+            url=NEXTDAY_MONTHLY_ARCHIVE_URL,
+        )
+        opener = FakeOpener(response)
+        result = http.fetch_nemweb_resource(
+            NEXTDAY_MONTHLY_ARCHIVE_URL,
+            max_bytes=limit,
+            opener=opener,
+        )
+        self.assertEqual(result.body, response._body)
+        self.assertEqual(response.read_sizes, [limit + 1])
+
+        with self.assertRaises(http.NemwebHttpError):
+            http.fetch_nemweb_resource(
+                NEXTDAY_MONTHLY_ARCHIVE_URL,
+                max_bytes=limit + 1,
+                opener=opener,
+            )
 
     def test_fetches_official_dispatch_price_index_and_artifact(self) -> None:
         for url, body in (
