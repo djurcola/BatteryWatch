@@ -35,9 +35,11 @@ psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/006_artifact_recorded_event.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/007_backfill_runtime_details.sql"
+psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
+  --file="$app_dir/migrations/008_authoritative_soc.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 --tuples-only --no-align \
   <<'SQL'
-SELECT count(*) = 12
+SELECT count(*) = 13
 FROM information_schema.tables
 WHERE table_schema = 'public'
   AND table_name IN (
@@ -46,7 +48,8 @@ WHERE table_schema = 'public'
     'dispatch_price_artifacts',
     'historical_backfill_runs',
     'historical_backfill_items', 'historical_backfill_events',
-    'historical_source_artifacts', 'historical_backfill_item_artifacts'
+    'historical_source_artifacts', 'historical_backfill_item_artifacts',
+    'raw_nextday_soc_observations'
   );
 SQL
 unset database_url

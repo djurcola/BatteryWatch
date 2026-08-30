@@ -46,10 +46,10 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
 
         self.assertIn("004_historical_backfill_ledger.sql", migrate_script)
         self.assertIn("005_historical_source_artifacts.sql", migrate_script)
-        self.assertIn("SELECT count(*) = 12", migrate_script)
+        self.assertIn("SELECT count(*) = 13", migrate_script)
         for table in ("historical_source_artifacts", "historical_backfill_item_artifacts"):
             self.assertIn(f"'{table}'", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 8)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 9)
 
         upper = migration.upper()
         for forbidden in ("DROP ", "ALTER ", "TRUNCATE "):
@@ -88,7 +88,7 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         ):
             self.assertIn(f"'{event_type}'", migration)
         self.assertIn("006_artifact_recorded_event.sql", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 8)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 9)
         self.assertNotIn("TRUNCATE ", upper)
         self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
 
@@ -115,9 +115,90 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         self.assertIn("historical_backfill_events_details_check", migration)
         self.assertIn("jsonb_typeof(details) = 'object'", migration)
         self.assertIn("007_backfill_runtime_details.sql", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 8)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 9)
         self.assertNotIn("TRUNCATE ", upper)
         self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
+
+    def test_adds_authoritative_individual_soc_schema_after_runtime_details(self) -> None:
+        app_root = Path(__file__).resolve().parents[2]
+        migration_path = app_root / "migrations" / "008_authoritative_soc.sql"
+        self.assertTrue(migration_path.exists(), "008 authoritative-SOC migration is missing")
+
+        migration = migration_path.read_text(encoding="utf-8")
+        migrate_script = (app_root / "deploy" / "migrate.sh").read_text(encoding="utf-8")
+        upper = migration.upper()
+
+        self.assertIn("BEGIN;", upper)
+        self.assertIn("COMMIT;", upper)
+        self.assertIn("CREATE TABLE IF NOT EXISTS raw_nextday_soc_observations", migration)
+        for column in (
+            "artifact_sha256",
+            "generator_id",
+            "interval_start",
+            "soc_mwh",
+            "intervention",
+            "run_number",
+            "dispatch_interval",
+            "last_changed",
+            "report_timestamp",
+            "downloaded_at",
+            "ingestion_version",
+            "correction_version",
+        ):
+            self.assertIn(column, migration)
+        self.assertIn("REFERENCES historical_source_artifacts", migration)
+        self.assertIn("REFERENCES generators", migration)
+        self.assertIn("ON DELETE RESTRICT", migration)
+        self.assertIn("raw_nextday_soc_observations_artifact_time_idx", migration)
+        self.assertIn("raw_nextday_soc_observations_generator_time_idx", migration)
+
+        self.assertIn("ALTER TABLE generator_soc_5m", migration)
+        for column in (
+            "soc_mwh",
+            "capacity_mwh",
+            "capacity_effective_from",
+            "capacity_effective_to",
+            "capacity_source_id",
+            "capacity_source_timestamp",
+            "report_timestamp",
+            "downloaded_at",
+            "intervention",
+            "run_number",
+            "dispatch_interval",
+            "source_artifact_sha256",
+        ):
+            self.assertIn(f"ADD COLUMN IF NOT EXISTS {column}", migration)
+        self.assertIn("generator_soc_5m_authoritative_soc_check", migration)
+        self.assertIn("generator_soc_5m_capacity_provenance_check", migration)
+        self.assertIn("generator_soc_5m_authoritative_metadata_check", migration)
+        self.assertGreaterEqual(
+            migration.count("num_nonnulls("),
+            4,
+            "all-or-none SOC provenance checks must not pass through SQL NULL",
+        )
+        self.assertIn("'nextday_soc'", migration)
+        self.assertIn("PUBLIC_NEXT_DAY_DISPATCH_", migration)
+        self.assertIn("Next_Day_Dispatch/", migration)
+        for constraint in (
+            "historical_backfill_items_feed_check",
+            "historical_backfill_events_feed_check",
+            "historical_source_artifacts_feed_check",
+            "historical_source_artifacts_archive_identity_ck",
+            "historical_backfill_item_artifacts_feed_check",
+        ):
+            self.assertIn(f"DROP CONSTRAINT IF EXISTS {constraint}", migration)
+            self.assertIn(f"ADD CONSTRAINT {constraint}", migration)
+
+        self.assertIn("008_authoritative_soc.sql", migrate_script)
+        self.assertLess(
+            migrate_script.index("007_backfill_runtime_details.sql"),
+            migrate_script.index("008_authoritative_soc.sql"),
+        )
+        self.assertIn("SELECT count(*) = 13", migrate_script)
+        self.assertIn("'raw_nextday_soc_observations'", migrate_script)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 9)
+        for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
+            self.assertNotIn(forbidden, upper)
 
 
 if __name__ == "__main__":
