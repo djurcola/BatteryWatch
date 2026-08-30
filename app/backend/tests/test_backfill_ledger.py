@@ -6,6 +6,7 @@ from pathlib import Path
 import unittest
 
 from batterywatch_api.backfill_ledger import (
+    BackfillClaim,
     BackfillEnsureResult,
     BackfillPlanItem,
     BackfillRunConflictError,
@@ -94,6 +95,87 @@ class BackfillLedgerMigrationTests(unittest.TestCase):
 
 
 class PostgreSQLBackfillLedgerTests(unittest.TestCase):
+    def test_claim_next_claims_deterministic_item_and_appends_event(self) -> None:
+        run_id = "run-20260828"
+        report_date = date(2026, 8, 28)
+        source_url = (
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/"
+            "PUBLIC_DISPATCHIS_20260828.zip"
+        )
+        connection = FakeConnection(
+            fetchone_results=(
+                ("dispatch_price", report_date, source_url),
+                ("dispatch_price", report_date, source_url, 4),
+            )
+        )
+
+        claim = PostgreSQLBackfillLedger(connection).claim_next(run_id)
+
+        self.assertEqual(
+            claim,
+            BackfillClaim(run_id, "dispatch_price", report_date, source_url, 4),
+        )
+        self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
+        self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
+        self.assertEqual(len(connection.executions), 3)
+        self.assertIn("status IN ('pending', 'failed')", connection.executions[0][0])
+        self.assertIn("ORDER BY feed, report_date", connection.executions[0][0])
+        self.assertIn("FOR UPDATE SKIP LOCKED", connection.executions[0][0])
+        self.assertIn("UPDATE historical_backfill_items", connection.executions[1][0])
+        self.assertEqual(
+            connection.executions[1][1], (run_id, "dispatch_price", report_date)
+        )
+        self.assertEqual(
+            connection.executions[2][1],
+            (run_id, "dispatch_price", report_date, "claimed", 4),
+        )
+
+    def test_claim_next_database_failure_rolls_back_and_reraises_same_error(self) -> None:
+        report_date = date(2026, 8, 28)
+        source_url = (
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/"
+            "PUBLIC_DISPATCHIS_20260828.zip"
+        )
+        failure = RuntimeError("injected database failure")
+        connection = FakeConnection(
+            fetchone_results=(("dispatch_price", report_date, source_url),),
+            fail_on_execute=2,
+            failure=failure,
+        )
+
+        with self.assertRaises(RuntimeError) as raised:
+            PostgreSQLBackfillLedger(connection).claim_next("run-20260828")
+
+        self.assertIs(raised.exception, failure)
+        self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
+        self.assertEqual(connection.closed_cursors, 1)
+
+    def test_claim_next_rejects_invalid_run_id_before_sql(self) -> None:
+        connection = FakeConnection()
+
+        with self.assertRaises(ValueError):
+            PostgreSQLBackfillLedger(connection).claim_next("bad id")
+
+        self.assertEqual(
+            (connection.executions, connection.cursor_calls,
+             connection.commits, connection.rollbacks),
+            ([], 0, 0, 0),
+        )
+
+    def test_claim_next_returns_none_when_no_item_is_eligible(self) -> None:
+        connection = FakeConnection(fetchone_results=(None,))
+
+        claim = PostgreSQLBackfillLedger(connection).claim_next("run-20260828")
+
+        self.assertIsNone(claim)
+        self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
+        self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
+        self.assertEqual(len(connection.executions), 1)
+        self.assertNotIn(
+            "INSERT INTO historical_backfill_events",
+            connection.executions[0][0],
+        )
+
     def test_ensure_new_run_plans_items_and_events_in_deterministic_order(self) -> None:
         spec = BackfillRunSpec(
             "run-20260828",

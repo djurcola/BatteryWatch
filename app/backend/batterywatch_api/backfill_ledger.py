@@ -25,6 +25,15 @@ class BackfillPlanItem:
 
 
 @dataclass(frozen=True, slots=True)
+class BackfillClaim:
+    run_id: str
+    feed: str
+    report_date: date
+    source_url: str
+    attempt_number: int
+
+
+@dataclass(frozen=True, slots=True)
 class BackfillEnsureResult:
     created: bool
     resumed: bool
@@ -94,6 +103,24 @@ WHERE run_id = %s
 ORDER BY feed, report_date
 """
 
+_CLAIM_SELECT_SQL = """
+SELECT feed, report_date, source_url
+FROM historical_backfill_items
+WHERE run_id = %s AND status IN ('pending', 'failed')
+ORDER BY feed, report_date
+LIMIT 1
+FOR UPDATE SKIP LOCKED
+"""
+
+_CLAIM_UPDATE_SQL = """
+UPDATE historical_backfill_items
+SET status = 'running', attempt_count = attempt_count + 1,
+    started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+WHERE run_id = %s AND feed = %s AND report_date = %s
+  AND status IN ('pending', 'failed')
+RETURNING feed, report_date, source_url, attempt_count
+"""
+
 _RECOVER_ITEMS_SQL = """
 UPDATE historical_backfill_items
 SET status = 'pending', updated_at = CURRENT_TIMESTAMP, started_at = NULL
@@ -121,9 +148,13 @@ _FEED_URLS = {
 }
 
 
-def _validate_spec(spec: BackfillRunSpec) -> None:
-    if _RUN_ID_PATTERN.fullmatch(spec.run_id) is None:
+def _validate_run_id(run_id: str) -> None:
+    if not isinstance(run_id, str) or _RUN_ID_PATTERN.fullmatch(run_id) is None:
         raise ValueError("invalid backfill run id")
+
+
+def _validate_spec(spec: BackfillRunSpec) -> None:
+    _validate_run_id(spec.run_id)
     if not isinstance(spec.requested_start, datetime) or not isinstance(
         spec.requested_end, datetime
     ):
@@ -159,6 +190,50 @@ class PostgreSQLBackfillLedger:
 
     def __init__(self, connection: _Connection):
         self._connection = connection
+
+    def claim_next(self, run_id: str) -> BackfillClaim | None:
+        _validate_run_id(run_id)
+        try:
+            with _managed_cursor(self._connection) as cursor:
+                cursor.execute(_CLAIM_SELECT_SQL, (run_id,))
+                selected = cursor.fetchone()
+                if selected is None:
+                    result = None
+                else:
+                    feed, report_date, source_url = selected
+                    cursor.execute(
+                        _CLAIM_UPDATE_SQL,
+                        (run_id, feed, report_date),
+                    )
+                    claimed = cursor.fetchone()
+                    if claimed is None:
+                        raise RuntimeError("claimed backfill item disappeared")
+                    claimed_feed, claimed_date, claimed_url, attempt_number = claimed
+                    cursor.execute(
+                        _EVENT_INSERT_SQL,
+                        (
+                            run_id,
+                            claimed_feed,
+                            claimed_date,
+                            "claimed",
+                            attempt_number,
+                        ),
+                    )
+                    result = BackfillClaim(
+                        run_id,
+                        claimed_feed,
+                        claimed_date,
+                        claimed_url,
+                        attempt_number,
+                    )
+            self._connection.commit()
+            return result
+        except Exception:
+            try:
+                self._connection.rollback()
+            except Exception:
+                pass
+            raise
 
     def ensure_run(
         self,
@@ -237,6 +312,7 @@ class PostgreSQLBackfillLedger:
 
 
 __all__ = [
+    "BackfillClaim",
     "BackfillEnsureResult",
     "BackfillPlanItem",
     "BackfillRunConflictError",
