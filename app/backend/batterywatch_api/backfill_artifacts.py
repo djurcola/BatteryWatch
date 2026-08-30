@@ -122,14 +122,14 @@ INSERT INTO historical_source_artifacts (
     source_url,
     filename,
     byte_count,
-    raw_archive
+    raw_bytes
 )
 VALUES (%s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT DO NOTHING RETURNING 1
 """
 
 _ARTIFACT_SELECT_SQL = """
-SELECT feed, report_date, source_url, filename, byte_count, raw_archive
+SELECT feed, report_date, source_url, filename, byte_count, raw_bytes
 FROM historical_source_artifacts
 WHERE artifact_sha256 = %s
 """

@@ -49,7 +49,7 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         self.assertIn("SELECT count(*) = 12", migrate_script)
         for table in ("historical_source_artifacts", "historical_backfill_item_artifacts"):
             self.assertIn(f"'{table}'", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 7)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 8)
 
         upper = migration.upper()
         for forbidden in ("DROP ", "ALTER ", "TRUNCATE "):
@@ -88,7 +88,34 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         ):
             self.assertIn(f"'{event_type}'", migration)
         self.assertIn("006_artifact_recorded_event.sql", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 7)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 8)
+        self.assertNotIn("TRUNCATE ", upper)
+        self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
+
+    def test_adds_runtime_ledger_error_and_event_detail_columns(self) -> None:
+        app_root = Path(__file__).resolve().parents[2]
+        migration_path = app_root / "migrations" / "007_backfill_runtime_details.sql"
+        self.assertTrue(migration_path.exists(), "007 runtime-details migration is missing")
+
+        migration = migration_path.read_text(encoding="utf-8")
+        migrate_script = (app_root / "deploy" / "migrate.sh").read_text(
+            encoding="utf-8"
+        )
+        upper = migration.upper()
+
+        self.assertIn("BEGIN;", upper)
+        self.assertIn("COMMIT;", upper)
+        self.assertIn("ALTER TABLE historical_backfill_items", migration)
+        self.assertIn("ADD COLUMN IF NOT EXISTS last_error TEXT", migration)
+        self.assertIn("historical_backfill_items_last_error_check", migration)
+        self.assertIn("char_length(last_error) BETWEEN 1 AND 2048", migration)
+        self.assertIn("ALTER TABLE historical_backfill_events", migration)
+        self.assertIn("ADD COLUMN IF NOT EXISTS details JSONB", migration)
+        self.assertIn("DEFAULT '{}'::jsonb", migration)
+        self.assertIn("historical_backfill_events_details_check", migration)
+        self.assertIn("jsonb_typeof(details) = 'object'", migration)
+        self.assertIn("007_backfill_runtime_details.sql", migrate_script)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 8)
         self.assertNotIn("TRUNCATE ", upper)
         self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
 

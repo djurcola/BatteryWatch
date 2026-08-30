@@ -118,6 +118,8 @@ class PostgreSQLBackfillArtifactRegistrarTests(unittest.TestCase):
 
         artifact_sql, artifact_parameters = connection.executions[1]
         self.assertIn("INSERT INTO historical_source_artifacts", artifact_sql)
+        self.assertIn("raw_bytes", artifact_sql)
+        self.assertNotIn("raw_archive", artifact_sql)
         self.assertIn("ON CONFLICT DO NOTHING RETURNING 1", artifact_sql)
         self.assertEqual(
             artifact_parameters,
@@ -184,7 +186,7 @@ class PostgreSQLBackfillArtifactRegistrarTests(unittest.TestCase):
         self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
         self.assertEqual(len(connection.executions), 5)
         self.assertIn(
-            "SELECT feed, report_date, source_url, filename, byte_count, raw_archive",
+            "SELECT feed, report_date, source_url, filename, byte_count, raw_bytes",
             connection.executions[2][0],
         )
         self.assertEqual(connection.executions[2][1], (digest,))

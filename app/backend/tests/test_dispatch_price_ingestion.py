@@ -227,7 +227,7 @@ class DispatchPriceMigrationTests(unittest.TestCase):
         self.assertIn("'dispatch_price_artifacts'", migrate_script)
         self.assertIn("004_historical_backfill_ledger.sql", migrate_script)
         self.assertIn("database_url=$BATTERYWATCH_DATABASE_URL", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 7)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 8)
         self.assertNotIn("export PGDATABASE=", migrate_script)
 
 
