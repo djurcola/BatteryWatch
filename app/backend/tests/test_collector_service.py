@@ -167,6 +167,43 @@ class CollectorServiceTests(unittest.TestCase):
         self.assertEqual(generators[0].source_id, "reviewed-registry")
         self.assertEqual(generators[0].ingestion_version, 1)
 
+    def test_cycle_preserves_explicit_historical_source_url(self) -> None:
+        captured: list[CapturingIngestor] = []
+
+        def ingestor_factory(connection):
+            ingestor = CapturingIngestor(connection)
+            captured.append(ingestor)
+            return ingestor
+
+        run_collection_cycle(
+            object(),
+            (
+                BatteryAsset(
+                    "BAT1",
+                    "Battery One",
+                    "NSW1",
+                    10,
+                    20,
+                    "reviewed-registry",
+                    datetime(2025, 3, 31, tzinfo=UTC),
+                ),
+            ),
+            collect=lambda **kwargs: collection(),
+            ingestor_factory=ingestor_factory,
+            receipt_source_url=(
+                "https://www.nemweb.com.au/REPORTS/ARCHIVE/Dispatch_SCADA/"
+                "PUBLIC_DISPATCHSCADA_20260830.zip"
+            ),
+        )
+
+        assert captured[0].call is not None
+        receipt = captured[0].call[0]
+        self.assertEqual(
+            receipt.source_url,
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/Dispatch_SCADA/"
+            "PUBLIC_DISPATCHSCADA_20260830.zip",
+        )
+
     def test_price_cycle_persists_raw_artifact_and_five_regions(self) -> None:
         captured: list[CapturingPriceIngestor] = []
 

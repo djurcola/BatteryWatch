@@ -102,6 +102,7 @@ def run_collection_cycle(
     *,
     collect: Callable[..., DispatchScadaCollection] = collect_latest_dispatch_scada,
     ingestor_factory: Callable[[Any], _Ingestor] = PostgreSQLDispatchScadaIngestor,
+    receipt_source_url: str | None = None,
 ) -> DispatchScadaIngestionResult:
     """Fetch, validate, map, and atomically persist one latest artifact."""
 
@@ -119,7 +120,7 @@ def run_collection_cycle(
     reference = artifact.reference
     receipt = DispatchScadaArtifactReceipt(
         source_artifact_id=reference.source_artifact_id,
-        source_url=reference.url,
+        source_url=(reference.url if receipt_source_url is None else receipt_source_url),
         zip_filename=reference.zip_filename,
         csv_member_name=artifact.csv_member_name,
         report_timestamp=reference.report_timestamp,
