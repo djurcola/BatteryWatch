@@ -21,6 +21,10 @@ from .historical_price_backfill import (
     HistoricalPriceBackfillResult,
     run_price_backfill_claim,
 )
+from .historical_nextday_backfill import (
+    HistoricalNextDayBackfillResult,
+    run_nextday_soc_backfill_claim,
+)
 from .historical_scada_backfill import (
     HistoricalScadaBackfillResult,
     run_scada_backfill_claim,
@@ -34,6 +38,7 @@ class HistoricalBackfillResult:
     scada_results: tuple[HistoricalScadaBackfillResult, ...]
     price_results: tuple[HistoricalPriceBackfillResult, ...]
     finalization: BackfillRunFinalization
+    nextday_results: tuple[HistoricalNextDayBackfillResult, ...] = ()
 
     @property
     def claimed_count(self) -> int:
@@ -56,16 +61,32 @@ class HistoricalBackfillResult:
         return sum(result.applied_price_count for result in self.price_results)
 
     @property
+    def nextday_source_record_count(self) -> int:
+        return sum(result.source_rows for result in self.nextday_results)
+
+    @property
+    def nextday_applied_record_count(self) -> int:
+        return sum(result.effective_applied for result in self.nextday_results)
+
+    @property
+    def nextday_null_count(self) -> int:
+        return sum(result.source_null_count for result in self.nextday_results)
+
+    @property
+    def nextday_percentage_count(self) -> int:
+        return sum(result.percentage_count for result in self.nextday_results)
+
+    @property
     def replayed_interval_count(self) -> int:
         return sum(result.replayed_interval_count for result in self.scada_results) + sum(
             result.replayed_interval_count for result in self.price_results
-        )
+        ) + sum(result.raw_replayed for result in self.nextday_results)
 
     @property
     def replayed_outer_artifact_count(self) -> int:
         return sum(result.outer_artifact_replayed for result in self.scada_results) + sum(
             result.outer_artifact_replayed for result in self.price_results
-        )
+        ) + sum(result.outer_replayed for result in self.nextday_results)
 
 
 def _connect(database_url: str, *, connect_timeout: int) -> Any:
@@ -97,6 +118,7 @@ def run_historical_backfill(
     ledger_factory: Callable[[Any], Any] = PostgreSQLBackfillLedger,
     run_scada: Callable[..., HistoricalScadaBackfillResult] = run_scada_backfill_claim,
     run_price: Callable[..., HistoricalPriceBackfillResult] = run_price_backfill_claim,
+    run_nextday: Callable[..., HistoricalNextDayBackfillResult] = run_nextday_soc_backfill_claim,
 ) -> HistoricalBackfillResult:
     """Ensure, drain, and finalize one bounded supplied backfill plan."""
 
@@ -114,6 +136,7 @@ def run_historical_backfill(
     claims: list[BackfillClaim] = []
     scada_results: list[HistoricalScadaBackfillResult] = []
     price_results: list[HistoricalPriceBackfillResult] = []
+    nextday_results: list[HistoricalNextDayBackfillResult] = []
     while True:
         with _connection(database_url, connect) as connection:
             claim = ledger_factory(connection).claim_next(spec.run_id)
@@ -141,6 +164,17 @@ def run_historical_backfill(
                     spec.requested_end,
                 )
             )
+        elif claim.feed == "nextday_soc":
+            nextday_results.append(
+                run_nextday(
+                    database_url,
+                    materialized_assets,
+                    claim,
+                    spec.requested_start,
+                    spec.requested_end,
+                    spec.ingestion_version,
+                )
+            )
         else:
             raise ValueError("unsupported historical backfill feed")
 
@@ -153,6 +187,7 @@ def run_historical_backfill(
         tuple(scada_results),
         tuple(price_results),
         finalization,
+        tuple(nextday_results),
     )
 
 
