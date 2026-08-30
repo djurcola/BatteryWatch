@@ -179,6 +179,26 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         self.assertIn("'nextday_soc'", migration)
         self.assertIn("PUBLIC_NEXT_DAY_DISPATCH_", migration)
         self.assertIn("Next_Day_Dispatch/", migration)
+        for column in (
+            "parent_artifact_sha256",
+            "artifact_published_at",
+            "artifact_downloaded_at",
+            "publication_id",
+        ):
+            self.assertIn(f"ADD COLUMN IF NOT EXISTS {column}", migration)
+        self.assertIn("historical_source_artifacts_parent_fk", migration)
+        self.assertIn("REFERENCES historical_source_artifacts (artifact_sha256)", migration)
+        self.assertIn("historical_source_artifacts_nested_metadata_ck", migration)
+        self.assertRegex(
+            migration,
+            r"num_nonnulls\(\s*parent_artifact_sha256,\s*"
+            r"artifact_published_at,\s*artifact_downloaded_at,\s*"
+            r"publication_id\s*\)",
+        )
+        self.assertIn("artifact_published_at <= artifact_downloaded_at", migration)
+        self.assertIn("source_url =", migration)
+        self.assertIn("|| '#' || filename", migration)
+        self.assertIn("historical_source_artifacts_parent_idx", migration)
         for constraint in (
             "historical_backfill_items_feed_check",
             "historical_backfill_events_feed_check",

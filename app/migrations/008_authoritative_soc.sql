@@ -16,32 +16,93 @@ ALTER TABLE historical_backfill_events
         CHECK (feed IN ('dispatch_price', 'dispatch_scada', 'nextday_soc'));
 
 ALTER TABLE historical_source_artifacts
+    ADD COLUMN IF NOT EXISTS parent_artifact_sha256 TEXT,
+    ADD COLUMN IF NOT EXISTS artifact_published_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS artifact_downloaded_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS publication_id TEXT,
     DROP CONSTRAINT IF EXISTS historical_source_artifacts_feed_check,
     ADD CONSTRAINT historical_source_artifacts_feed_check
         CHECK (feed IN ('dispatch_price', 'dispatch_scada', 'nextday_soc')),
+    DROP CONSTRAINT IF EXISTS historical_source_artifacts_nested_metadata_ck,
+    ADD CONSTRAINT historical_source_artifacts_nested_metadata_ck CHECK (
+        num_nonnulls(
+            parent_artifact_sha256,
+            artifact_published_at,
+            artifact_downloaded_at,
+            publication_id
+        ) IN (0, 4)
+        AND (
+            parent_artifact_sha256 IS NULL
+            OR parent_artifact_sha256 <> artifact_sha256
+        )
+        AND (
+            publication_id IS NULL
+            OR publication_id ~ '^[0-9]{1,32}$'
+        )
+        AND (
+            artifact_published_at IS NULL
+            OR artifact_published_at <= artifact_downloaded_at
+        )
+    ),
     DROP CONSTRAINT IF EXISTS historical_source_artifacts_archive_identity_ck,
     ADD CONSTRAINT historical_source_artifacts_archive_identity_ck CHECK (
         (
             feed = 'dispatch_price'
+            AND parent_artifact_sha256 IS NULL
             AND source_url =
                 'https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/' || filename
             AND filename = 'PUBLIC_DISPATCHIS_' || to_char(report_date, 'YYYYMMDD') || '.zip'
         )
         OR (
             feed = 'dispatch_scada'
+            AND parent_artifact_sha256 IS NULL
             AND source_url =
                 'https://www.nemweb.com.au/REPORTS/ARCHIVE/Dispatch_SCADA/' || filename
             AND filename = 'PUBLIC_DISPATCHSCADA_' || to_char(report_date, 'YYYYMMDD') || '.zip'
         )
         OR (
             feed = 'nextday_soc'
+            AND parent_artifact_sha256 IS NULL
             AND report_date = date_trunc('month', report_date)::date
             AND source_url =
                 'https://www.nemweb.com.au/REPORTS/ARCHIVE/Next_Day_Dispatch/' || filename
             AND filename =
                 'PUBLIC_NEXT_DAY_DISPATCH_' || to_char(report_date, 'YYYYMM') || '01.zip'
         )
+        OR (
+            feed = 'nextday_soc'
+            AND parent_artifact_sha256 IS NOT NULL
+            AND source_url =
+                'https://www.nemweb.com.au/REPORTS/ARCHIVE/Next_Day_Dispatch/'
+                || 'PUBLIC_NEXT_DAY_DISPATCH_'
+                || to_char(report_date, 'YYYYMM') || '01.zip'
+                || '#' || filename
+            AND filename =
+                'PUBLIC_NEXT_DAY_DISPATCH_' || to_char(report_date, 'YYYYMMDD')
+                || '_' || publication_id || '.zip'
+        )
     );
+
+DO $migration$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'historical_source_artifacts_parent_fk'
+          AND conrelid = 'historical_source_artifacts'::regclass
+    ) THEN
+        ALTER TABLE historical_source_artifacts
+            ADD CONSTRAINT historical_source_artifacts_parent_fk
+            FOREIGN KEY (parent_artifact_sha256)
+            REFERENCES historical_source_artifacts (artifact_sha256)
+            ON DELETE RESTRICT;
+    END IF;
+END
+$migration$;
+
+CREATE INDEX IF NOT EXISTS historical_source_artifacts_parent_idx
+    ON historical_source_artifacts (parent_artifact_sha256)
+    WHERE parent_artifact_sha256 IS NOT NULL;
 
 ALTER TABLE historical_backfill_item_artifacts
     DROP CONSTRAINT IF EXISTS historical_backfill_item_artifacts_feed_check,
