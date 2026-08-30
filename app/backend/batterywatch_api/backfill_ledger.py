@@ -18,6 +18,18 @@ class BackfillRunSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class BackfillRunProgress:
+    run_id: str
+    status: str
+    total: int
+    pending: int
+    running: int
+    completed: int
+    failed: int
+    total_attempts: int
+
+
+@dataclass(frozen=True, slots=True)
 class BackfillPlanItem:
     feed: str
     report_date: date
@@ -94,6 +106,21 @@ WHERE run_id = %s
 FOR UPDATE
 """
 
+_RUN_PROGRESS_SQL = """
+SELECT
+    r.status,
+    COUNT(i.feed),
+    COUNT(*) FILTER (WHERE i.status = 'pending'),
+    COUNT(*) FILTER (WHERE i.status = 'running'),
+    COUNT(*) FILTER (WHERE i.status = 'completed'),
+    COUNT(*) FILTER (WHERE i.status = 'failed'),
+    COALESCE(SUM(i.attempt_count), 0)::bigint
+FROM historical_backfill_runs AS r
+LEFT JOIN historical_backfill_items AS i ON i.run_id = r.run_id
+WHERE r.run_id = %s
+GROUP BY r.status
+"""
+
 _ITEM_INSERT_SQL = """
 INSERT INTO historical_backfill_items (
     run_id, feed, report_date, source_url, status
@@ -122,6 +149,12 @@ WHERE run_id = %s AND status IN ('pending', 'failed')
 ORDER BY feed, report_date
 LIMIT 1
 FOR UPDATE SKIP LOCKED
+"""
+
+_CLAIM_RUN_SELECT_SQL = """
+SELECT status
+FROM historical_backfill_runs
+WHERE run_id = %s
 """
 
 _CLAIM_UPDATE_SQL = """
@@ -256,11 +289,50 @@ def _validate_claim(claim: BackfillClaim) -> None:
         raise ValueError("invalid backfill attempt number")
 
 
+def _progress_from_row(
+    run_id: str, row: tuple[Any, ...]
+) -> BackfillRunProgress:
+    if len(row) != 7 or row[0] not in {"running", "completed", "failed"}:
+        raise BackfillRunConflictError("invalid backfill progress row")
+    counts = row[1:]
+    if any(
+        type(value) is not int or not 0 <= value <= _MAX_BIGINT
+        for value in counts
+    ):
+        raise BackfillRunConflictError("invalid backfill progress counts")
+    total, pending, running, completed, failed, total_attempts = counts
+    if (
+        total <= 0
+        or pending + running + completed + failed != total
+        or total_attempts < running + completed + failed
+    ):
+        raise BackfillRunConflictError("inconsistent backfill progress counts")
+    return BackfillRunProgress(run_id, row[0], *counts)
+
+
 class PostgreSQLBackfillLedger:
     """Own the transaction that creates or exactly resumes a backfill run."""
 
     def __init__(self, connection: _Connection):
         self._connection = connection
+
+    def progress(self, run_id: str) -> BackfillRunProgress:
+        _validate_run_id(run_id)
+        try:
+            with _managed_cursor(self._connection) as cursor:
+                cursor.execute(_RUN_PROGRESS_SQL, (run_id,))
+                row = cursor.fetchone()
+                if row is None:
+                    raise BackfillRunConflictError("backfill run does not exist")
+                result = _progress_from_row(run_id, row)
+            self._connection.commit()
+            return result
+        except Exception:
+            try:
+                self._connection.rollback()
+            except Exception:
+                pass
+            raise
 
     def fail(
         self, claim: BackfillClaim, *, error_summary: str
@@ -366,6 +438,12 @@ class PostgreSQLBackfillLedger:
         _validate_run_id(run_id)
         try:
             with _managed_cursor(self._connection) as cursor:
+                cursor.execute(_CLAIM_RUN_SELECT_SQL, (run_id,))
+                run_row = cursor.fetchone()
+                if run_row is None:
+                    raise BackfillRunConflictError("backfill run does not exist")
+                if run_row not in {("running",), ("completed",), ("failed",)}:
+                    raise BackfillRunConflictError("invalid backfill run status")
                 cursor.execute(_CLAIM_SELECT_SQL, (run_id,))
                 selected = cursor.fetchone()
                 if selected is None:
@@ -489,6 +567,7 @@ __all__ = [
     "BackfillItemFailure",
     "BackfillPlanItem",
     "BackfillRunConflictError",
+    "BackfillRunProgress",
     "BackfillRunSpec",
     "PostgreSQLBackfillLedger",
 ]

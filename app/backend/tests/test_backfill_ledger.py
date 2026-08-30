@@ -12,6 +12,7 @@ from batterywatch_api.backfill_ledger import (
     BackfillItemFailure,
     BackfillPlanItem,
     BackfillRunConflictError,
+    BackfillRunProgress,
     BackfillRunSpec,
     PostgreSQLBackfillLedger,
 )
@@ -97,6 +98,40 @@ class BackfillLedgerMigrationTests(unittest.TestCase):
 
 
 class PostgreSQLBackfillLedgerTests(unittest.TestCase):
+    def test_progress_returns_deterministic_status_and_attempt_counts(self) -> None:
+        connection = FakeConnection(
+            fetchone_results=(("running", 62, 2, 1, 58, 1, 64),)
+        )
+
+        progress = PostgreSQLBackfillLedger(connection).progress("run-20260828")
+
+        self.assertEqual(
+            progress,
+            BackfillRunProgress("run-20260828", "running", 62, 2, 1, 58, 1, 64),
+        )
+        self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
+        self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
+        self.assertEqual(len(connection.executions), 1)
+        statement, parameters = connection.executions[0]
+        self.assertIn("FILTER (WHERE i.status = 'pending')", statement)
+        self.assertIn("FILTER (WHERE i.status = 'running')", statement)
+        self.assertIn("FILTER (WHERE i.status = 'completed')", statement)
+        self.assertIn("FILTER (WHERE i.status = 'failed')", statement)
+        self.assertIn("SUM(i.attempt_count)", statement)
+        self.assertIn("COALESCE(SUM(i.attempt_count), 0)::bigint", statement)
+        self.assertEqual(parameters, ("run-20260828",))
+
+    def test_progress_rejects_inconsistent_database_counts(self) -> None:
+        connection = FakeConnection(
+            fetchone_results=(("running", 62, 2, 1, 58, 0, 64),)
+        )
+
+        with self.assertRaises(BackfillRunConflictError):
+            PostgreSQLBackfillLedger(connection).progress("run-20260828")
+
+        self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
+        self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
+
     def test_fail_records_guarded_item_transition_and_event(self) -> None:
         claim = BackfillClaim(
             "run-20260828",
@@ -243,6 +278,7 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
         )
         connection = FakeConnection(
             fetchone_results=(
+                ("running",),
                 ("dispatch_price", report_date, source_url),
                 ("dispatch_price", report_date, source_url, 4),
             )
@@ -256,16 +292,17 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
         )
         self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
         self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
-        self.assertEqual(len(connection.executions), 3)
-        self.assertIn("status IN ('pending', 'failed')", connection.executions[0][0])
-        self.assertIn("ORDER BY feed, report_date", connection.executions[0][0])
-        self.assertIn("FOR UPDATE SKIP LOCKED", connection.executions[0][0])
-        self.assertIn("UPDATE historical_backfill_items", connection.executions[1][0])
+        self.assertEqual(len(connection.executions), 4)
+        self.assertIn("FROM historical_backfill_runs", connection.executions[0][0])
+        self.assertIn("status IN ('pending', 'failed')", connection.executions[1][0])
+        self.assertIn("ORDER BY feed, report_date", connection.executions[1][0])
+        self.assertIn("FOR UPDATE SKIP LOCKED", connection.executions[1][0])
+        self.assertIn("UPDATE historical_backfill_items", connection.executions[2][0])
         self.assertEqual(
-            connection.executions[1][1], (run_id, "dispatch_price", report_date)
+            connection.executions[2][1], (run_id, "dispatch_price", report_date)
         )
         self.assertEqual(
-            connection.executions[2][1],
+            connection.executions[3][1],
             (run_id, "dispatch_price", report_date, "claimed", 4),
         )
 
@@ -277,7 +314,7 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
         )
         failure = RuntimeError("injected database failure")
         connection = FakeConnection(
-            fetchone_results=(("dispatch_price", report_date, source_url),),
+            fetchone_results=(("running",),),
             fail_on_execute=2,
             failure=failure,
         )
@@ -302,18 +339,29 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
         )
 
     def test_claim_next_returns_none_when_no_item_is_eligible(self) -> None:
-        connection = FakeConnection(fetchone_results=(None,))
+        connection = FakeConnection(fetchone_results=(("running",), None))
 
         claim = PostgreSQLBackfillLedger(connection).claim_next("run-20260828")
 
         self.assertIsNone(claim)
         self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
         self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
-        self.assertEqual(len(connection.executions), 1)
-        self.assertNotIn(
-            "INSERT INTO historical_backfill_events",
-            connection.executions[0][0],
+        self.assertEqual(len(connection.executions), 2)
+        self.assertFalse(
+            any(
+                "INSERT INTO historical_backfill_events" in statement
+                for statement, _ in connection.executions
+            )
         )
+
+    def test_claim_next_rejects_absent_run(self) -> None:
+        connection = FakeConnection(fetchone_results=(None,))
+
+        with self.assertRaises(BackfillRunConflictError):
+            PostgreSQLBackfillLedger(connection).claim_next("missing-run")
+
+        self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
+        self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
 
     def test_ensure_new_run_plans_items_and_events_in_deterministic_order(self) -> None:
         spec = BackfillRunSpec(
