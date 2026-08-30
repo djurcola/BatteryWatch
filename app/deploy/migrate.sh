@@ -27,15 +27,19 @@ psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/002_dispatch_scada_raw_ingestion.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/003_dispatch_price_artifacts.sql"
+psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
+  --file="$app_dir/migrations/004_historical_backfill_ledger.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 --tuples-only --no-align \
   <<'SQL'
-SELECT count(*) = 7
+SELECT count(*) = 10
 FROM information_schema.tables
 WHERE table_schema = 'public'
   AND table_name IN (
     'generators', 'generator_power_5m', 'generator_soc_5m', 'nem_price_5m',
     'dispatch_scada_artifacts', 'raw_dispatch_scada_observations',
-    'dispatch_price_artifacts'
+    'dispatch_price_artifacts',
+    'historical_backfill_runs',
+    'historical_backfill_items', 'historical_backfill_events'
   );
 SQL
 unset database_url
