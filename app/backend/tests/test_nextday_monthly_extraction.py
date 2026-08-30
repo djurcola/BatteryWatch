@@ -1,11 +1,11 @@
 """Tests for bounded Next Day monthly archive extraction."""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 import struct
 import unittest
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from batterywatch_api.nextday_archives import (
     NEXTDAY_ARCHIVE_INDEX_URL,
@@ -47,10 +47,13 @@ def _monthly_archive(
             stem = f"PUBLIC_NEXT_DAY_DISPATCH_202507{day:02d}_{publication_id}"
             outer_name = first_outer_name if index == 0 and first_outer_name else f"{stem}.zip"
             csv_name = first_csv_name if index == 0 and first_csv_name else f"{stem}.CSV"
-            outer.writestr(
+            published_nem = datetime(2025, 7, day) + timedelta(days=1)
+            member = ZipInfo(
                 outer_name,
-                _zip_bytes(csv_name, csv_payload),
+                date_time=(*published_nem.date().timetuple()[:3], 4, 11, 26),
             )
+            member.compress_type = ZIP_DEFLATED
+            outer.writestr(member, _zip_bytes(csv_name, csv_payload))
     raw_bytes = output.getvalue()
     reference = NextDayMonthlyArchiveRef(
         date(2025, 7, 1),
@@ -74,6 +77,10 @@ class NextDayMonthlyExtractionTests(unittest.TestCase):
         self.assertEqual(
             (manifest.members[0].report_date, manifest.members[-1].report_date),
             (date(2025, 7, 1), date(2025, 7, 31)),
+        )
+        self.assertEqual(
+            manifest.members[0].artifact_published_at,
+            datetime(2025, 7, 1, 18, 11, 26, tzinfo=UTC),
         )
         self.assertEqual(daily.member, manifest.members[0])
         self.assertEqual(daily.csv_bytes, csv_payload)

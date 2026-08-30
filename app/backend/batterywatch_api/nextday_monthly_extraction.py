@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from io import BytesIO
 import re
@@ -29,6 +29,8 @@ MAX_NEXTDAY_DAILY_ZIP_BYTES = 16 * 1024 * 1024
 MAX_NEXTDAY_DAILY_CSV_BYTES = 128 * 1024 * 1024
 MAX_NEXTDAY_MONTH_EXPANDED_ZIP_BYTES = 512 * 1024 * 1024
 MAX_NEXTDAY_COMPRESSION_RATIO = 100
+_NEM_TIMEZONE = timezone(timedelta(hours=10))
+_UTC = timezone.utc
 _MEMBER_NAME_RE = re.compile(
     r"PUBLIC_NEXT_DAY_DISPATCH_([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{1,32})\.zip"
 )
@@ -52,6 +54,7 @@ class NextDayDailyMemberRef:
     report_date: date
     filename: str
     publication_id: str
+    artifact_published_at: datetime
     compressed_size: int
     expanded_size: int
     crc32: int
@@ -134,6 +137,14 @@ def _member_identity(
     return report_date, match.group(4)
 
 
+def _artifact_published_at(member: ZipInfo) -> datetime:
+    try:
+        published = datetime(*member.date_time, tzinfo=_NEM_TIMEZONE)
+    except (OverflowError, TypeError, ValueError):
+        raise NextDayArchiveError("invalid Next Day member timestamp") from None
+    return published.astimezone(_UTC)
+
+
 def validate_nextday_monthly_archive(
     reference: NextDayMonthlyArchiveRef,
     raw_bytes: bytes,
@@ -175,6 +186,7 @@ def validate_nextday_monthly_archive(
                         report_date,
                         info.filename,
                         publication_id,
+                        _artifact_published_at(info),
                         compressed,
                         expanded,
                         info.CRC,
@@ -201,6 +213,7 @@ def validate_nextday_monthly_archive(
 def _member_info_matches(info: ZipInfo, member: NextDayDailyMemberRef) -> bool:
     return (
         info.filename == member.filename
+        and _artifact_published_at(info) == member.artifact_published_at
         and info.compress_size == member.compressed_size
         and info.file_size == member.expanded_size
         and info.CRC == member.crc32
