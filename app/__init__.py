@@ -1,0 +1,1 @@
+"""BatteryWatch successor application packages."""

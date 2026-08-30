@@ -1,0 +1,603 @@
+{
+  "schema_version": 1,
+  "assets": [
+    {
+      "duid": "ADPBA1",
+      "site_name": "Adelaide Desalination Plant",
+      "region": "SA1",
+      "capacity_mw": 7.76,
+      "storage_capacity_mwh": 12.6,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-02-28T00:00:00Z"
+    },
+    {
+      "duid": "BALB1",
+      "site_name": "Ballarat Energy Storage System",
+      "region": "VIC1",
+      "capacity_mw": 30.0,
+      "storage_capacity_mwh": 30.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-11T00:00:00Z"
+    },
+    {
+      "duid": "BBATTERY1",
+      "site_name": "Bouldercombe Battery project",
+      "region": "QLD1",
+      "capacity_mw": 50.0,
+      "storage_capacity_mwh": 100.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-18T00:00:00Z"
+    },
+    {
+      "duid": "BHB1",
+      "site_name": "Broken Hill",
+      "region": "NSW1",
+      "capacity_mw": 50.0,
+      "storage_capacity_mwh": 50.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-11T00:00:00Z"
+    },
+    {
+      "duid": "BLYTHB1",
+      "site_name": "Blyth BESS",
+      "region": "SA1",
+      "capacity_mw": 200.0,
+      "storage_capacity_mwh": 400.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-24T00:00:00Z"
+    },
+    {
+      "duid": "BOWWBA1",
+      "site_name": "Bolivar Waste Water Treatment",
+      "region": "SA1",
+      "capacity_mw": 3.08,
+      "storage_capacity_mwh": 5.04,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-05T00:00:00Z"
+    },
+    {
+      "duid": "BRDDBES1",
+      "site_name": "Broadsound Energy Park",
+      "region": "QLD1",
+      "capacity_mw": 180.0,
+      "storage_capacity_mwh": 360.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "BRNDBES1",
+      "site_name": "Brendale BESS",
+      "region": "QLD1",
+      "capacity_mw": 205.0,
+      "storage_capacity_mwh": 410.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "BULBES1",
+      "site_name": "Bulgana Green Power Hub - BESS",
+      "region": "VIC1",
+      "capacity_mw": 20.0,
+      "storage_capacity_mwh": 34.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2024-12-03T00:00:00Z"
+    },
+    {
+      "duid": "BUNGAMB1",
+      "site_name": "Bungama Battery Energy Storage System",
+      "region": "SA1",
+      "capacity_mw": 150.0,
+      "storage_capacity_mwh": 300.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "CAPBES1",
+      "site_name": "Capital Battery",
+      "region": "NSW1",
+      "capacity_mw": 100.32,
+      "storage_capacity_mwh": 200.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-17T00:00:00Z"
+    },
+    {
+      "duid": "CBWWBA1",
+      "site_name": "Christies Beach Wastewater Treatment Plant",
+      "region": "SA1",
+      "capacity_mw": 2.16,
+      "storage_capacity_mwh": 4.32,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-07T00:00:00Z"
+    },
+    {
+      "duid": "CGBESS01",
+      "site_name": "Clements Gap BESS",
+      "region": "SA1",
+      "capacity_mw": 60.0,
+      "storage_capacity_mwh": 120.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "CHBESS1",
+      "site_name": "Chinchilla BESS",
+      "region": "QLD1",
+      "capacity_mw": 100.0,
+      "storage_capacity_mwh": 200.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-14T00:00:00Z"
+    },
+    {
+      "duid": "DALNTH1",
+      "site_name": "Dalrymple BESS",
+      "region": "SA1",
+      "capacity_mw": 30.0,
+      "storage_capacity_mwh": 9.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-11T00:00:00Z"
+    },
+    {
+      "duid": "DPNTB1",
+      "site_name": "Darlington Point Energy Storage System",
+      "region": "NSW1",
+      "capacity_mw": 25.0,
+      "storage_capacity_mwh": 50.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-11T00:00:00Z"
+    },
+    {
+      "duid": "ERB01",
+      "site_name": "Eraring Battery Energy Storage System",
+      "region": "NSW1",
+      "capacity_mw": 460.0,
+      "storage_capacity_mwh": 1997.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "ERB02",
+      "site_name": "Eraring Battery Energy Storage System 2",
+      "region": "NSW1",
+      "capacity_mw": 240.0,
+      "storage_capacity_mwh": 1390.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "GANNB1",
+      "site_name": "Gannawarra Energy Storage System",
+      "region": "VIC1",
+      "capacity_mw": 25.33,
+      "storage_capacity_mwh": 50.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-11T00:00:00Z"
+    },
+    {
+      "duid": "GREENB1",
+      "site_name": "Greenbank BESS",
+      "region": "QLD1",
+      "capacity_mw": 200.0,
+      "storage_capacity_mwh": 400.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-14T00:00:00Z"
+    },
+    {
+      "duid": "HBESS1",
+      "site_name": "Hazelwood Battery Energy Storage System (HBESS)",
+      "region": "VIC1",
+      "capacity_mw": 200.07,
+      "storage_capacity_mwh": 162.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-24T00:00:00Z"
+    },
+    {
+      "duid": "HPR1",
+      "site_name": "Hornsdale Power Reserve",
+      "region": "SA1",
+      "capacity_mw": 150.0,
+      "storage_capacity_mwh": 194.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "HVWWBA1",
+      "site_name": "Happy Valley Reservoir",
+      "region": "SA1",
+      "capacity_mw": 5.52,
+      "storage_capacity_mwh": 8.82,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-05T00:00:00Z"
+    },
+    {
+      "duid": "KEPBG1",
+      "site_name": "Kennedy Energy Park - Phase 1 - Storage",
+      "region": "QLD1",
+      "capacity_mw": 2.0,
+      "storage_capacity_mwh": 4.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-12T00:00:00Z"
+    },
+    {
+      "duid": "KESSB1",
+      "site_name": "Koorangie Energy Storage System",
+      "region": "VIC1",
+      "capacity_mw": 185.0,
+      "storage_capacity_mwh": 370.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "LBB1",
+      "site_name": "Lake Bonney Battery Energy Storage",
+      "region": "SA1",
+      "capacity_mw": 25.0,
+      "storage_capacity_mwh": 52.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-26T00:00:00Z"
+    },
+    {
+      "duid": "LDBESS1",
+      "site_name": "Liddell Battery Energy Storage System",
+      "region": "NSW1",
+      "capacity_mw": 500.0,
+      "storage_capacity_mwh": 1086.2,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "LGAPBS1",
+      "site_name": "Lincoln Gap Wind Farm Battery",
+      "region": "SA1",
+      "capacity_mw": 9.0,
+      "storage_capacity_mwh": 10.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "LIMBESS1",
+      "site_name": "Limondale Battery",
+      "region": "NSW1",
+      "capacity_mw": 50.0,
+      "storage_capacity_mwh": 536.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "LVES1",
+      "site_name": "Latrobe Valley BESS",
+      "region": "VIC1",
+      "capacity_mw": 100.0,
+      "storage_capacity_mwh": 200.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "MANNUMB1",
+      "site_name": "Mannum Battery Energy Storage System",
+      "region": "SA1",
+      "capacity_mw": 100.0,
+      "storage_capacity_mwh": 200.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "MLB01",
+      "site_name": "Mortlake Battery Energy Storage System",
+      "region": "NSW1",
+      "capacity_mw": 300.0,
+      "storage_capacity_mwh": 650.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "MREHA1",
+      "site_name": "Melbourne Renewable Energy Hub Connection A1",
+      "region": "VIC1",
+      "capacity_mw": 200.0,
+      "storage_capacity_mwh": 400.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "MREHA2",
+      "site_name": "Melbourne Renewable Energy Hub Connection A2",
+      "region": "VIC1",
+      "capacity_mw": 200.0,
+      "storage_capacity_mwh": 400.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "MREHA3",
+      "site_name": "Melbourne Renewable Energy Hub Connection A3",
+      "region": "VIC1",
+      "capacity_mw": 200.0,
+      "storage_capacity_mwh": 800.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "MRNBESS1",
+      "site_name": "Mornington BESS",
+      "region": "VIC1",
+      "capacity_mw": 240.0,
+      "storage_capacity_mwh": 590.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "ORABESS1",
+      "site_name": "Orana BESS",
+      "region": "NSW1",
+      "capacity_mw": 415.0,
+      "storage_capacity_mwh": 1660.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "PIBESS1",
+      "site_name": "Philip Island BESS",
+      "region": "VIC1",
+      "capacity_mw": 5.0,
+      "storage_capacity_mwh": 10.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-07T00:00:00Z"
+    },
+    {
+      "duid": "PLBESS1",
+      "site_name": "Pine Lodge BESS",
+      "region": "VIC1",
+      "capacity_mw": 250.0,
+      "storage_capacity_mwh": 600.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "QBYNB1",
+      "site_name": "Queanbeyan BESS",
+      "region": "NSW1",
+      "capacity_mw": 10.0,
+      "storage_capacity_mwh": 20.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-13T00:00:00Z"
+    },
+    {
+      "duid": "QPSFB2",
+      "site_name": "Quorn Park Solar Hybrid",
+      "region": "NSW1",
+      "capacity_mw": 19.0,
+      "storage_capacity_mwh": 40.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "RANGEB1",
+      "site_name": "Rangebank BESS",
+      "region": "VIC1",
+      "capacity_mw": 200.0,
+      "storage_capacity_mwh": 400.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-13T00:00:00Z"
+    },
+    {
+      "duid": "RESS1",
+      "site_name": "Riverina Energy Storage System 1",
+      "region": "NSW1",
+      "capacity_mw": 60.0,
+      "storage_capacity_mwh": 120.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-12T00:00:00Z"
+    },
+    {
+      "duid": "RIVNB2",
+      "site_name": "Riverina Energy Storage System 2",
+      "region": "NSW1",
+      "capacity_mw": 65.0,
+      "storage_capacity_mwh": 130.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-11T00:00:00Z"
+    },
+    {
+      "duid": "SMFBESS1",
+      "site_name": "Summerfield BESS 1",
+      "region": "SA1",
+      "capacity_mw": 120.0,
+      "storage_capacity_mwh": 480.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "SMFBESS2",
+      "site_name": "Summerfield BESS 2",
+      "region": "SA1",
+      "capacity_mw": 120.0,
+      "storage_capacity_mwh": 480.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "SMTHBES1",
+      "site_name": "Smithfield Battery Energy Storage System, Units 1 - 36",
+      "region": "NSW1",
+      "capacity_mw": 65.0,
+      "storage_capacity_mwh": 130.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "SNB01",
+      "site_name": "Supernode BESS",
+      "region": "QLD1",
+      "capacity_mw": 260.0,
+      "storage_capacity_mwh": 545.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "SNB02",
+      "site_name": "Supernode BESS",
+      "region": "QLD1",
+      "capacity_mw": 260.0,
+      "storage_capacity_mwh": 1090.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "STABESS1",
+      "site_name": "Stanwell Battery Energy Storage System",
+      "region": "QLD1",
+      "capacity_mw": 300.0,
+      "storage_capacity_mwh": 1200.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "SWANBBF1",
+      "site_name": "Swanbank BESS",
+      "region": "QLD1",
+      "capacity_mw": 250.0,
+      "storage_capacity_mwh": 500.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "TARBESS1",
+      "site_name": "Tarong BESS",
+      "region": "QLD1",
+      "capacity_mw": 300.0,
+      "storage_capacity_mwh": 600.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "TB2B1",
+      "site_name": "Tailem Bend Battery Project",
+      "region": "SA1",
+      "capacity_mw": 41.5,
+      "storage_capacity_mwh": 84.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2024-12-11T00:00:00Z"
+    },
+    {
+      "duid": "TEMPB1",
+      "site_name": "Templers Battery Energy Storage System",
+      "region": "SA1",
+      "capacity_mw": 111.0,
+      "storage_capacity_mwh": 285.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "TIB1",
+      "site_name": "Torrens Island BESS",
+      "region": "SA1",
+      "capacity_mw": 250.7,
+      "storage_capacity_mwh": 250.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-11T00:00:00Z"
+    },
+    {
+      "duid": "TRGBESS1",
+      "site_name": "Terang BESS",
+      "region": "VIC1",
+      "capacity_mw": 100.0,
+      "storage_capacity_mwh": 200.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "ULPBESS1",
+      "site_name": "Ulinda Park BESS",
+      "region": "QLD1",
+      "capacity_mw": 155.0,
+      "storage_capacity_mwh": 298.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "VBB1",
+      "site_name": "Victorian Big Battery",
+      "region": "VIC1",
+      "capacity_mw": 300.0,
+      "storage_capacity_mwh": 470.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-26T00:00:00Z"
+    },
+    {
+      "duid": "WALGRV1",
+      "site_name": "Wallgrove Grid Battery project",
+      "region": "NSW1",
+      "capacity_mw": 50.0,
+      "storage_capacity_mwh": 75.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-19T00:00:00Z"
+    },
+    {
+      "duid": "WANDB1",
+      "site_name": "Wandoan South BESS",
+      "region": "QLD1",
+      "capacity_mw": 100.0,
+      "storage_capacity_mwh": 150.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-18T00:00:00Z"
+    },
+    {
+      "duid": "WDBESS1",
+      "site_name": "Western Downs Battery",
+      "region": "QLD1",
+      "capacity_mw": 254.94,
+      "storage_capacity_mwh": 510.0,
+      "source_id": "aemo-generation-information-2025",
+      "source_timestamp": "2025-03-24T00:00:00Z"
+    },
+    {
+      "duid": "WDBESS2",
+      "site_name": "Western Downs Battery Energy Storage System (BESS)",
+      "region": "QLD1",
+      "capacity_mw": 255.0,
+      "storage_capacity_mwh": 510.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "WOOLES1",
+      "site_name": "Woolooga BESS",
+      "region": "QLD1",
+      "capacity_mw": 222.0,
+      "storage_capacity_mwh": 593.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    },
+    {
+      "duid": "WTAHB1",
+      "site_name": "Waratah Super Battery",
+      "region": "NSW1",
+      "capacity_mw": 850.0,
+      "storage_capacity_mwh": 1679.0,
+      "source_id": "aemo-nem-registration-list-2026-08-25",
+      "source_timestamp": "2026-08-25T00:00:00Z"
+    }
+  ],
+  "excluded": [
+    {
+      "duid": "KEPBL1",
+      "reason": "not present in latest Dispatch SCADA artifact"
+    },
+    {
+      "duid": "MOORABS1",
+      "reason": "not present in latest Dispatch SCADA artifact"
+    },
+    {
+      "duid": "NESBESS1",
+      "reason": "AEMO registration workbook reports non-positive maximum storage capacity"
+    },
+    {
+      "duid": "NESBESS2",
+      "reason": "AEMO registration workbook reports non-positive maximum storage capacity"
+    },
+    {
+      "duid": "WILLBES1",
+      "reason": "AEMO registration workbook reports non-positive maximum storage capacity"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+[Unit]
+Description=BatteryWatch database-backed API and dashboard
+Documentation=file:%h/batterywatch/current/app/deploy/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/batterywatch/current/app/backend
+EnvironmentFile=%h/.config/batterywatch/runtime.env
+ExecStart=%h/batterywatch/current/venv/bin/uvicorn batterywatch_api.database_main:app --host 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=20s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# These capability-dependent protections fail before ExecStart under the
+# unprivileged systemd user manager on the deployment host.
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=default.target
