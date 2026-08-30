@@ -20,8 +20,12 @@ from .nemweb_archives import (
     DISPATCH_SCADA_FEED,
     plan_archive_range,
 )
+from .nemweb_http import fetch_nemweb_resource
 from .nextday_archives import (
+    NEXTDAY_ARCHIVE_INDEX_MAX_BYTES,
+    NEXTDAY_ARCHIVE_INDEX_URL,
     NextDayMonthlyArchiveRef,
+    discover_nextday_monthly_archives,
     plan_nextday_monthly_archives,
 )
 
@@ -162,6 +166,7 @@ def _summary(
     result: HistoricalBackfillResult,
     planned_item_count: int,
     spec: BackfillRunSpec,
+    missing_nextday_months: tuple[date, ...],
 ) -> dict[str, Any]:
     progress = result.finalization.progress
     return {
@@ -178,6 +183,13 @@ def _summary(
         "scada_mapped_power_count": result.scada_mapped_power_count,
         "price_source_record_count": result.price_source_record_count,
         "price_applied_record_count": result.price_applied_record_count,
+        "nextday_source_record_count": result.nextday_source_record_count,
+        "nextday_applied_record_count": result.nextday_applied_record_count,
+        "nextday_null_count": result.nextday_null_count,
+        "nextday_percentage_count": result.nextday_percentage_count,
+        "missing_nextday_months": tuple(
+            month.isoformat() for month in missing_nextday_months
+        ),
         "replayed_interval_count": result.replayed_interval_count,
         "replayed_outer_artifact_count": result.replayed_outer_artifact_count,
         "completion_replayed": result.finalization.replayed,
@@ -196,6 +208,10 @@ def main(
     environ: dict[str, str] | None = None,
     load_assets: Callable[[Path], Iterable[BatteryAsset]] = load_battery_assets,
     run: Callable[..., HistoricalBackfillResult] = run_historical_backfill,
+    fetch_index: Callable[..., Any] = fetch_nemweb_resource,
+    discover_nextday: Callable[..., tuple[NextDayMonthlyArchiveRef, ...]] = (
+        discover_nextday_monthly_archives
+    ),
 ) -> int:
     parser = argparse.ArgumentParser(prog="batterywatch-backfill")
     parser.add_argument("--run-id", required=True)
@@ -213,13 +229,49 @@ def main(
             raise ValueError("database URL is required")
         start = _parse_utc(arguments.start)
         end = _parse_utc(arguments.end)
-        spec, items = build_operator_plan(
+        requested_feeds = tuple(arguments.feeds.split(","))
+        nextday_references: tuple[NextDayMonthlyArchiveRef, ...] = ()
+        if "soc" in requested_feeds:
+            index_resource = fetch_index(
+                NEXTDAY_ARCHIVE_INDEX_URL,
+                max_bytes=NEXTDAY_ARCHIVE_INDEX_MAX_BYTES,
+            )
+            index_payload = index_resource.body.decode("utf-8", errors="strict")
+            nextday_references = discover_nextday(
+                index_payload,
+                index_url=NEXTDAY_ARCHIVE_INDEX_URL,
+            )
+        details = build_operator_plan_details(
             arguments.run_id,
             start,
             end,
-            feeds=tuple(arguments.feeds.split(",")),
+            feeds=requested_feeds,
             ingestion_version=arguments.ingestion_version,
+            nextday_archives=nextday_references,
         )
+        spec, items = details.spec, details.items
+        if not items and details.missing_nextday_months:
+            print(
+                json.dumps(
+                    {
+                        "missing_nextday_months": [
+                            month.isoformat()
+                            for month in details.missing_nextday_months
+                        ],
+                        "planned_item_count": 0,
+                        "requested_end": spec.requested_end.isoformat().replace(
+                            "+00:00", "Z"
+                        ),
+                        "requested_start": spec.requested_start.isoformat().replace(
+                            "+00:00", "Z"
+                        ),
+                        "run_id": spec.run_id,
+                        "status": "source_unavailable",
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 0
         assets_path = arguments.assets_path or Path(
             environment.get(
                 "BATTERYWATCH_ASSETS_PATH",
@@ -232,7 +284,12 @@ def main(
             spec,
             items,
         )
-        print(json.dumps(_summary(result, len(items), spec), sort_keys=True))
+        print(
+            json.dumps(
+                _summary(result, len(items), spec, details.missing_nextday_months),
+                sort_keys=True,
+            )
+        )
         return 0
     except Exception as error:
         print(
