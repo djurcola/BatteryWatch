@@ -12,6 +12,7 @@ from batterywatch_api.backfill_ledger import (
     BackfillItemFailure,
     BackfillPlanItem,
     BackfillRunConflictError,
+    BackfillRunFinalization,
     BackfillRunProgress,
     BackfillRunSpec,
     PostgreSQLBackfillLedger,
@@ -131,6 +132,80 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
 
         self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
         self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
+
+    def test_finalize_completes_run_with_deterministic_progress(self) -> None:
+        connection = FakeConnection(
+            fetchone_results=(
+                ("running",),
+                ("running", 2, 0, 0, 2, 0, 3),
+                (1,),
+            )
+        )
+
+        result = PostgreSQLBackfillLedger(connection).finalize("run-20260828")
+
+        self.assertEqual(
+            result,
+            BackfillRunFinalization(
+                False,
+                BackfillRunProgress(
+                    "run-20260828", "completed", 2, 0, 0, 2, 0, 3
+                ),
+            ),
+        )
+        self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
+        self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
+        self.assertEqual(len(connection.executions), 3)
+        self.assertIn("FOR UPDATE", connection.executions[0][0])
+        self.assertIn("FILTER (WHERE i.status = 'completed')", connection.executions[1][0])
+        self.assertIn("status = 'completed'", connection.executions[2][0])
+        self.assertEqual(connection.executions[2][1], ("run-20260828",))
+
+    def test_finalize_rejects_incomplete_run_without_update(self) -> None:
+        connection = FakeConnection(
+            fetchone_results=(
+                ("running",),
+                ("running", 2, 1, 0, 1, 0, 2),
+                None,
+            )
+        )
+
+        with self.assertRaisesRegex(BackfillRunConflictError, "incomplete"):
+            PostgreSQLBackfillLedger(connection).finalize("run-20260828")
+
+        self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
+        self.assertEqual(len(connection.executions), 2)
+
+    def test_finalize_exact_replay_is_idempotent_without_update(self) -> None:
+        connection = FakeConnection(
+            fetchone_results=(
+                ("completed",),
+                ("completed", 2, 0, 0, 2, 0, 3),
+            )
+        )
+
+        result = PostgreSQLBackfillLedger(connection).finalize("run-20260828")
+
+        self.assertTrue(result.replayed)
+        self.assertEqual(result.progress.status, "completed")
+        self.assertEqual(result.progress.completed, 2)
+        self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
+        self.assertEqual(len(connection.executions), 2)
+
+    def test_finalize_rejects_missing_guarded_run_update(self) -> None:
+        connection = FakeConnection(
+            fetchone_results=(
+                ("running",),
+                ("running", 1, 0, 0, 1, 0, 1),
+                None,
+            )
+        )
+
+        with self.assertRaisesRegex(BackfillRunConflictError, "not applied"):
+            PostgreSQLBackfillLedger(connection).finalize("run-20260828")
+
+        self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
+        self.assertEqual(len(connection.executions), 3)
 
     def test_fail_records_guarded_item_transition_and_event(self) -> None:
         claim = BackfillClaim(

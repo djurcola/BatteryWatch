@@ -30,6 +30,12 @@ class BackfillRunProgress:
 
 
 @dataclass(frozen=True, slots=True)
+class BackfillRunFinalization:
+    replayed: bool
+    progress: BackfillRunProgress
+
+
+@dataclass(frozen=True, slots=True)
 class BackfillPlanItem:
     feed: str
     report_date: date
@@ -119,6 +125,21 @@ FROM historical_backfill_runs AS r
 LEFT JOIN historical_backfill_items AS i ON i.run_id = r.run_id
 WHERE r.run_id = %s
 GROUP BY r.status
+"""
+
+_FINALIZE_RUN_LOCK_SQL = """
+SELECT status
+FROM historical_backfill_runs
+WHERE run_id = %s
+FOR UPDATE
+"""
+
+_FINALIZE_RUN_UPDATE_SQL = """
+UPDATE historical_backfill_runs
+SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
+    updated_at = CURRENT_TIMESTAMP
+WHERE run_id = %s AND status = 'running'
+RETURNING 1
 """
 
 _ITEM_INSERT_SQL = """
@@ -315,6 +336,62 @@ class PostgreSQLBackfillLedger:
 
     def __init__(self, connection: _Connection):
         self._connection = connection
+
+    def finalize(self, run_id: str) -> BackfillRunFinalization:
+        _validate_run_id(run_id)
+        try:
+            with _managed_cursor(self._connection) as cursor:
+                cursor.execute(_FINALIZE_RUN_LOCK_SQL, (run_id,))
+                run_row = cursor.fetchone()
+                if run_row is None:
+                    raise BackfillRunConflictError("backfill run does not exist")
+                if run_row not in {("running",), ("completed",), ("failed",)}:
+                    raise BackfillRunConflictError("invalid backfill run status")
+                cursor.execute(_RUN_PROGRESS_SQL, (run_id,))
+                progress_row = cursor.fetchone()
+                if progress_row is None:
+                    raise BackfillRunConflictError("backfill run does not exist")
+                progress = _progress_from_row(run_id, progress_row)
+                if progress.status != run_row[0]:
+                    raise BackfillRunConflictError("backfill run status changed")
+                if (
+                    progress.pending != 0
+                    or progress.running != 0
+                    or progress.failed != 0
+                    or progress.completed != progress.total
+                ):
+                    raise BackfillRunConflictError("backfill run is incomplete")
+                if progress.status == "completed":
+                    result = BackfillRunFinalization(True, progress)
+                elif progress.status == "running":
+                    cursor.execute(_FINALIZE_RUN_UPDATE_SQL, (run_id,))
+                    if cursor.fetchone() is None:
+                        raise BackfillRunConflictError(
+                            "backfill run completion was not applied"
+                        )
+                    result = BackfillRunFinalization(
+                        False,
+                        BackfillRunProgress(
+                            progress.run_id,
+                            "completed",
+                            progress.total,
+                            progress.pending,
+                            progress.running,
+                            progress.completed,
+                            progress.failed,
+                            progress.total_attempts,
+                        ),
+                    )
+                else:
+                    raise BackfillRunConflictError("backfill run cannot be finalized")
+            self._connection.commit()
+            return result
+        except Exception:
+            try:
+                self._connection.rollback()
+            except Exception:
+                pass
+            raise
 
     def progress(self, run_id: str) -> BackfillRunProgress:
         _validate_run_id(run_id)
@@ -567,6 +644,7 @@ __all__ = [
     "BackfillItemFailure",
     "BackfillPlanItem",
     "BackfillRunConflictError",
+    "BackfillRunFinalization",
     "BackfillRunProgress",
     "BackfillRunSpec",
     "PostgreSQLBackfillLedger",
