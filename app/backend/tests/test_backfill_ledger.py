@@ -9,6 +9,7 @@ from batterywatch_api.backfill_ledger import (
     BackfillClaim,
     BackfillEnsureResult,
     BackfillItemCompletion,
+    BackfillItemFailure,
     BackfillPlanItem,
     BackfillRunConflictError,
     BackfillRunSpec,
@@ -96,6 +97,77 @@ class BackfillLedgerMigrationTests(unittest.TestCase):
 
 
 class PostgreSQLBackfillLedgerTests(unittest.TestCase):
+    def test_fail_records_guarded_item_transition_and_event(self) -> None:
+        claim = BackfillClaim(
+            "run-20260828",
+            "dispatch_scada",
+            date(2026, 8, 28),
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/Dispatch_SCADA/"
+            "PUBLIC_DISPATCHSCADA_20260828.zip",
+            2,
+        )
+        connection = FakeConnection(
+            fetchone_results=(
+                (claim.source_url, "running", claim.attempt_number),
+                (1,),
+            )
+        )
+
+        result = PostgreSQLBackfillLedger(connection).fail(
+            claim, error_summary="archive checksum mismatch"
+        )
+
+        self.assertEqual(
+            result, BackfillItemFailure(False, "archive checksum mismatch")
+        )
+        self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
+        self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
+        self.assertEqual(len(connection.executions), 3)
+        self.assertIn("FOR UPDATE", connection.executions[0][0])
+        self.assertIn("status = 'failed'", connection.executions[1][0])
+        self.assertIn("status = 'running'", connection.executions[1][0])
+        self.assertEqual(
+            connection.executions[1][1],
+            (
+                "archive checksum mismatch",
+                claim.run_id,
+                claim.feed,
+                claim.report_date,
+                claim.attempt_number,
+            ),
+        )
+        self.assertEqual(
+            connection.executions[2][1],
+            (
+                claim.run_id,
+                claim.feed,
+                claim.report_date,
+                "failed",
+                claim.attempt_number,
+                "archive checksum mismatch",
+            ),
+        )
+
+    def test_fail_rejects_invalid_error_summary_before_sql(self) -> None:
+        claim = BackfillClaim(
+            "run-20260828",
+            "dispatch_scada",
+            date(2026, 8, 28),
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/Dispatch_SCADA/"
+            "PUBLIC_DISPATCHSCADA_20260828.zip",
+            1,
+        )
+        connection = FakeConnection()
+
+        with self.assertRaises(ValueError):
+            PostgreSQLBackfillLedger(connection).fail(claim, error_summary="")
+
+        self.assertEqual(
+            (connection.executions, connection.cursor_calls,
+             connection.commits, connection.rollbacks),
+            ([], 0, 0, 0),
+        )
+
     def test_complete_records_guarded_item_transition_and_event(self) -> None:
         claim = BackfillClaim(
             "run-20260828",
@@ -137,6 +209,29 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
                 claim.attempt_number,
                 145,
             ),
+        )
+
+    def test_complete_rejects_invalid_claim_before_sql(self) -> None:
+        claim = BackfillClaim(
+            "run-20260828",
+            "dispatch_price",
+            date(2026, 8, 28),
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/"
+            "PUBLIC_DISPATCHIS_20260828.zip",
+            1,
+        )
+        connection = FakeConnection()
+
+        with self.assertRaises(ValueError):
+            PostgreSQLBackfillLedger(connection).complete(
+                replace(claim, source_url="https://example.invalid/archive.zip"),
+                records_imported=0,
+            )
+
+        self.assertEqual(
+            (connection.executions, connection.cursor_calls,
+             connection.commits, connection.rollbacks),
+            ([], 0, 0, 0),
         )
 
     def test_claim_next_claims_deterministic_item_and_appends_event(self) -> None:
