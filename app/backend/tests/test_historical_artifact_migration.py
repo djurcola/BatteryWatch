@@ -49,11 +49,47 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         self.assertIn("SELECT count(*) = 12", migrate_script)
         for table in ("historical_source_artifacts", "historical_backfill_item_artifacts"):
             self.assertIn(f"'{table}'", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 6)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 7)
 
         upper = migration.upper()
         for forbidden in ("DROP ", "ALTER ", "TRUNCATE "):
             self.assertNotIn(forbidden, upper)
+        self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
+
+    def test_expands_event_constraint_for_artifact_recorded_atomically(self) -> None:
+        app_root = Path(__file__).resolve().parents[2]
+        migration_path = app_root / "migrations" / "006_artifact_recorded_event.sql"
+        self.assertTrue(migration_path.exists(), "006 event migration is missing")
+
+        migration = migration_path.read_text(encoding="utf-8")
+        migrate_script = (app_root / "deploy" / "migrate.sh").read_text(
+            encoding="utf-8"
+        )
+        upper = migration.upper()
+
+        self.assertIn("BEGIN;", upper)
+        self.assertIn("COMMIT;", upper)
+        self.assertIn("ALTER TABLE historical_backfill_events", migration)
+        self.assertIn(
+            "DROP CONSTRAINT IF EXISTS historical_backfill_events_event_type_check",
+            migration,
+        )
+        self.assertIn(
+            "ADD CONSTRAINT historical_backfill_events_event_type_check",
+            migration,
+        )
+        for event_type in (
+            "planned",
+            "recovered",
+            "claimed",
+            "artifact_recorded",
+            "completed",
+            "failed",
+        ):
+            self.assertIn(f"'{event_type}'", migration)
+        self.assertIn("006_artifact_recorded_event.sql", migrate_script)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 7)
+        self.assertNotIn("TRUNCATE ", upper)
         self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
 
 

@@ -31,6 +31,8 @@ psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/004_historical_backfill_ledger.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/005_historical_source_artifacts.sql"
+psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
+  --file="$app_dir/migrations/006_artifact_recorded_event.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 --tuples-only --no-align \
   <<'SQL'
 SELECT count(*) = 12
