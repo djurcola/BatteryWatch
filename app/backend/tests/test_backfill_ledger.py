@@ -8,6 +8,7 @@ import unittest
 from batterywatch_api.backfill_ledger import (
     BackfillClaim,
     BackfillEnsureResult,
+    BackfillItemCompletion,
     BackfillPlanItem,
     BackfillRunConflictError,
     BackfillRunSpec,
@@ -95,6 +96,49 @@ class BackfillLedgerMigrationTests(unittest.TestCase):
 
 
 class PostgreSQLBackfillLedgerTests(unittest.TestCase):
+    def test_complete_records_guarded_item_transition_and_event(self) -> None:
+        claim = BackfillClaim(
+            "run-20260828",
+            "dispatch_price",
+            date(2026, 8, 28),
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/"
+            "PUBLIC_DISPATCHIS_20260828.zip",
+            4,
+        )
+        connection = FakeConnection(
+            fetchone_results=(
+                (claim.source_url, "running", claim.attempt_number),
+                (1,),
+            )
+        )
+
+        result = PostgreSQLBackfillLedger(connection).complete(
+            claim, records_imported=145
+        )
+
+        self.assertEqual(result, BackfillItemCompletion(False, 145))
+        self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
+        self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
+        self.assertEqual(len(connection.executions), 3)
+        self.assertIn("FOR UPDATE", connection.executions[0][0])
+        self.assertIn("status = 'completed'", connection.executions[1][0])
+        self.assertIn("status = 'running'", connection.executions[1][0])
+        self.assertEqual(
+            connection.executions[1][1],
+            (claim.run_id, claim.feed, claim.report_date, claim.attempt_number),
+        )
+        self.assertEqual(
+            connection.executions[2][1],
+            (
+                claim.run_id,
+                claim.feed,
+                claim.report_date,
+                "completed",
+                claim.attempt_number,
+                145,
+            ),
+        )
+
     def test_claim_next_claims_deterministic_item_and_appends_event(self) -> None:
         run_id = "run-20260828"
         report_date = date(2026, 8, 28)

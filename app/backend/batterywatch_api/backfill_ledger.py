@@ -34,6 +34,12 @@ class BackfillClaim:
 
 
 @dataclass(frozen=True, slots=True)
+class BackfillItemCompletion:
+    replayed: bool
+    records_imported: int
+
+
+@dataclass(frozen=True, slots=True)
 class BackfillEnsureResult:
     created: bool
     resumed: bool
@@ -121,6 +127,32 @@ WHERE run_id = %s AND feed = %s AND report_date = %s
 RETURNING feed, report_date, source_url, attempt_count
 """
 
+_COMPLETE_LOCK_SQL = """
+SELECT source_url, status, attempt_count
+FROM historical_backfill_items
+WHERE run_id = %s AND feed = %s AND report_date = %s
+FOR UPDATE
+"""
+
+_COMPLETE_UPDATE_SQL = """
+UPDATE historical_backfill_items
+SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
+    updated_at = CURRENT_TIMESTAMP, last_error = NULL
+WHERE run_id = %s AND feed = %s AND report_date = %s
+  AND status = 'running' AND attempt_count = %s
+RETURNING 1
+"""
+
+_COMPLETE_EVENT_SQL = """
+INSERT INTO historical_backfill_events (
+    run_id, feed, report_date, event_type, attempt_number, details
+)
+VALUES (
+    %s, %s, %s, %s, %s,
+    jsonb_build_object('records_imported', %s)
+)
+"""
+
 _RECOVER_ITEMS_SQL = """
 UPDATE historical_backfill_items
 SET status = 'pending', updated_at = CURRENT_TIMESTAMP, started_at = NULL
@@ -185,11 +217,74 @@ def _validate_items(items: tuple[BackfillPlanItem, ...]) -> None:
             raise ValueError("invalid backfill archive URL")
 
 
+def _validate_claim(claim: BackfillClaim) -> None:
+    if type(claim) is not BackfillClaim:
+        raise ValueError("invalid backfill claim")
+    _validate_run_id(claim.run_id)
+    _validate_items(
+        (BackfillPlanItem(claim.feed, claim.report_date, claim.source_url),)
+    )
+    if (
+        type(claim.attempt_number) is not int
+        or not 1 <= claim.attempt_number <= _MAX_BIGINT
+    ):
+        raise ValueError("invalid backfill attempt number")
+
+
 class PostgreSQLBackfillLedger:
     """Own the transaction that creates or exactly resumes a backfill run."""
 
     def __init__(self, connection: _Connection):
         self._connection = connection
+
+    def complete(
+        self, claim: BackfillClaim, *, records_imported: int
+    ) -> BackfillItemCompletion:
+        _validate_claim(claim)
+        if (
+            type(records_imported) is not int
+            or not 0 <= records_imported <= _MAX_BIGINT
+        ):
+            raise ValueError("invalid imported record count")
+        try:
+            with _managed_cursor(self._connection) as cursor:
+                item_key = (claim.run_id, claim.feed, claim.report_date)
+                cursor.execute(_COMPLETE_LOCK_SQL, item_key)
+                current = cursor.fetchone()
+                expected = (
+                    claim.source_url,
+                    "running",
+                    claim.attempt_number,
+                )
+                if current != expected:
+                    raise BackfillRunConflictError(
+                        "backfill claim no longer owns the running item"
+                    )
+                cursor.execute(
+                    _COMPLETE_UPDATE_SQL,
+                    (*item_key, claim.attempt_number),
+                )
+                if cursor.fetchone() is None:
+                    raise BackfillRunConflictError(
+                        "backfill item completion was not applied"
+                    )
+                cursor.execute(
+                    _COMPLETE_EVENT_SQL,
+                    (
+                        *item_key,
+                        "completed",
+                        claim.attempt_number,
+                        records_imported,
+                    ),
+                )
+            self._connection.commit()
+            return BackfillItemCompletion(False, records_imported)
+        except Exception:
+            try:
+                self._connection.rollback()
+            except Exception:
+                pass
+            raise
 
     def claim_next(self, run_id: str) -> BackfillClaim | None:
         _validate_run_id(run_id)
@@ -314,6 +409,7 @@ class PostgreSQLBackfillLedger:
 __all__ = [
     "BackfillClaim",
     "BackfillEnsureResult",
+    "BackfillItemCompletion",
     "BackfillPlanItem",
     "BackfillRunConflictError",
     "BackfillRunSpec",
