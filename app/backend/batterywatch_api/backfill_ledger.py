@@ -251,10 +251,17 @@ _FEED_URLS = {
     "dispatch_price": (
         "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/",
         "PUBLIC_DISPATCHIS_",
+        False,
     ),
     "dispatch_scada": (
         "https://www.nemweb.com.au/REPORTS/ARCHIVE/Dispatch_SCADA/",
         "PUBLIC_DISPATCHSCADA_",
+        False,
+    ),
+    "nextday_soc": (
+        "https://www.nemweb.com.au/REPORTS/ARCHIVE/Next_Day_Dispatch/",
+        "PUBLIC_NEXT_DAY_DISPATCH_",
+        True,
     ),
 }
 
@@ -290,8 +297,15 @@ def _validate_items(items: tuple[BackfillPlanItem, ...]) -> None:
         if key in keys:
             raise ValueError("duplicate backfill plan item")
         keys.add(key)
-        base, prefix = _FEED_URLS[item.feed]
-        expected_url = f"{base}{prefix}{item.report_date:%Y%m%d}.zip"
+        base, prefix, monthly = _FEED_URLS[item.feed]
+        if monthly and item.report_date.day != 1:
+            raise ValueError("invalid monthly backfill report date")
+        stamp = (
+            f"{item.report_date:%Y%m}01"
+            if monthly
+            else f"{item.report_date:%Y%m%d}"
+        )
+        expected_url = f"{base}{prefix}{stamp}.zip"
         if item.source_url != expected_url:
             raise ValueError("invalid backfill archive URL")
 

@@ -87,6 +87,64 @@ def receipt(raw_archive: bytes = b"official archive bytes") -> BackfillArtifactR
 
 
 class PostgreSQLBackfillArtifactRegistrarTests(unittest.TestCase):
+    def test_records_canonical_monthly_nextday_soc_artifact(self) -> None:
+        report_date = date(2025, 7, 1)
+        source_url = (
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/Next_Day_Dispatch/"
+            "PUBLIC_NEXT_DAY_DISPATCH_20250701.zip"
+        )
+        evidence = BackfillArtifactReceipt(
+            BackfillClaim(
+                "soc-run-202507",
+                "nextday_soc",
+                report_date,
+                source_url,
+                1,
+            ),
+            datetime(2026, 8, 30, tzinfo=UTC),
+            None,
+            b"official monthly outer zip",
+        )
+        digest = hashlib.sha256(evidence.raw_archive).hexdigest()
+        connection = FakeConnection(
+            fetchone_results=((source_url, "running", 1), (1,), (1,))
+        )
+
+        result = PostgreSQLBackfillArtifactRegistrar(connection).record(evidence)
+
+        self.assertEqual(
+            result,
+            BackfillArtifactResult(digest, len(evidence.raw_archive), False),
+        )
+        artifact_parameters = connection.executions[1][1]
+        self.assertEqual(artifact_parameters[1:5], (
+            "nextday_soc",
+            report_date,
+            source_url,
+            "PUBLIC_NEXT_DAY_DISPATCH_20250701.zip",
+        ))
+
+    def test_monthly_nextday_receipt_requires_first_day_identity(self) -> None:
+        evidence = BackfillArtifactReceipt(
+            BackfillClaim(
+                "soc-run-202507-bad",
+                "nextday_soc",
+                date(2025, 7, 2),
+                "https://www.nemweb.com.au/REPORTS/ARCHIVE/Next_Day_Dispatch/"
+                "PUBLIC_NEXT_DAY_DISPATCH_20250701.zip",
+                1,
+            ),
+            datetime(2026, 8, 30, tzinfo=UTC),
+            None,
+            b"official monthly outer zip",
+        )
+        connection = FakeConnection()
+
+        with self.assertRaisesRegex(ValueError, "monthly"):
+            PostgreSQLBackfillArtifactRegistrar(connection).record(evidence)
+
+        self.assertEqual(connection.cursor_calls, 0)
+
     def test_records_content_link_and_event_in_one_transaction(self) -> None:
         evidence = receipt()
         digest = hashlib.sha256(evidence.raw_archive).hexdigest()

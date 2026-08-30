@@ -12,14 +12,21 @@ from .backfill_ledger import BackfillClaim
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 _MAX_ATTEMPT_NUMBER = 2_147_483_647
 _RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
-_FEED_URL_PREFIXES = {
+_FEED_URL_RULES = {
     "dispatch_scada": (
         "https://www.nemweb.com.au/REPORTS/ARCHIVE/Dispatch_SCADA/"
-        "PUBLIC_DISPATCHSCADA_"
+        "PUBLIC_DISPATCHSCADA_",
+        False,
     ),
     "dispatch_price": (
         "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/"
-        "PUBLIC_DISPATCHIS_"
+        "PUBLIC_DISPATCHIS_",
+        False,
+    ),
+    "nextday_soc": (
+        "https://www.nemweb.com.au/REPORTS/ARCHIVE/Next_Day_Dispatch/"
+        "PUBLIC_NEXT_DAY_DISPATCH_",
+        True,
     ),
 }
 
@@ -71,12 +78,20 @@ def _validate_receipt(receipt: object) -> BackfillArtifactReceipt:
         raise TypeError("receipt claim must be BackfillClaim")
     if not isinstance(claim.run_id, str) or _RUN_ID_RE.fullmatch(claim.run_id) is None:
         raise ValueError("invalid run_id")
-    prefix = _FEED_URL_PREFIXES.get(claim.feed)
-    if prefix is None:
+    rule = _FEED_URL_RULES.get(claim.feed)
+    if rule is None:
         raise ValueError("invalid feed")
     if type(claim.report_date) is not date:
         raise TypeError("report_date must be a date")
-    expected_url = f"{prefix}{claim.report_date:%Y%m%d}.zip"
+    prefix, monthly = rule
+    if monthly and claim.report_date.day != 1:
+        raise ValueError("monthly report_date must be the first of the month")
+    stamp = (
+        f"{claim.report_date:%Y%m}01"
+        if monthly
+        else f"{claim.report_date:%Y%m%d}"
+    )
+    expected_url = f"{prefix}{stamp}.zip"
     if claim.source_url != expected_url:
         raise ValueError("source_url does not match feed and report_date")
     if (

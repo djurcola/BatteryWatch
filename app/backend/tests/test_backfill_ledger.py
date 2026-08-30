@@ -483,6 +483,54 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
         )
         self.assertTrue(all("%s" in statement for statement, _ in connection.executions))
 
+    def test_ensure_new_run_accepts_canonical_monthly_nextday_soc_item(self) -> None:
+        spec = BackfillRunSpec(
+            "soc-run-202507",
+            datetime(2025, 7, 1, tzinfo=UTC),
+            datetime(2025, 8, 1, tzinfo=UTC),
+            3,
+        )
+        item = BackfillPlanItem(
+            "nextday_soc",
+            date(2025, 7, 1),
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/Next_Day_Dispatch/"
+            "PUBLIC_NEXT_DAY_DISPATCH_20250701.zip",
+        )
+        connection = FakeConnection(fetchone_results=((1,),))
+
+        result = PostgreSQLBackfillLedger(connection).ensure_run(spec, (item,))
+
+        self.assertEqual(result, BackfillEnsureResult(True, False, 1, 0))
+        item_inserts = tuple(
+            parameters
+            for statement, parameters in connection.executions
+            if "INSERT INTO historical_backfill_items" in statement
+        )
+        self.assertEqual(
+            item_inserts,
+            ((spec.run_id, item.feed, item.report_date, item.source_url),),
+        )
+
+    def test_monthly_nextday_soc_item_requires_first_day_identity(self) -> None:
+        spec = BackfillRunSpec(
+            "soc-run-202507-bad",
+            datetime(2025, 7, 1, tzinfo=UTC),
+            datetime(2025, 8, 1, tzinfo=UTC),
+            3,
+        )
+        item = BackfillPlanItem(
+            "nextday_soc",
+            date(2025, 7, 2),
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/Next_Day_Dispatch/"
+            "PUBLIC_NEXT_DAY_DISPATCH_20250701.zip",
+        )
+        connection = FakeConnection()
+
+        with self.assertRaisesRegex(ValueError, "monthly"):
+            PostgreSQLBackfillLedger(connection).ensure_run(spec, (item,))
+
+        self.assertEqual(connection.cursor_calls, 0)
+
     def test_exact_resume_recovers_interrupted_item_and_preserves_attempt(self) -> None:
         start = datetime(2026, 8, 27, 14, tzinfo=UTC)
         end = datetime(2026, 8, 29, 14, tzinfo=UTC)

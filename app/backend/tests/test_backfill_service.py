@@ -19,11 +19,43 @@ from batterywatch_api.historical_backfill import HistoricalBackfillResult
 from batterywatch_api.historical_price_backfill import HistoricalPriceBackfillResult
 from batterywatch_api.historical_scada_backfill import HistoricalScadaBackfillResult
 from batterywatch_api.backfill_service import build_operator_plan, main
+from batterywatch_api.backfill_service import build_operator_plan_details
+from batterywatch_api.nextday_archives import (
+    NEXTDAY_ARCHIVE_INDEX_URL,
+    NextDayMonthlyArchiveRef,
+)
 
 UTC = timezone.utc
 
 
 class BackfillServiceTests(unittest.TestCase):
+    def test_builds_soc_plan_with_explicit_missing_official_months(self) -> None:
+        def archive(month: int, size: int) -> NextDayMonthlyArchiveRef:
+            filename = f"PUBLIC_NEXT_DAY_DISPATCH_2025{month:02d}01.zip"
+            return NextDayMonthlyArchiveRef(
+                date(2025, month, 1),
+                filename,
+                NEXTDAY_ARCHIVE_INDEX_URL + filename,
+                size,
+                datetime(2025, month + 1, 1, tzinfo=UTC),
+            )
+
+        details = build_operator_plan_details(
+            "soc-operator-run",
+            datetime(2025, 7, 15, tzinfo=UTC),
+            datetime(2025, 9, 15, tzinfo=UTC),
+            feeds=("soc",),
+            ingestion_version=3,
+            nextday_archives=(archive(7, 210_000_000), archive(8, 220_000_000)),
+        )
+
+        self.assertEqual(details.spec.run_id, "soc-operator-run")
+        self.assertEqual(
+            tuple((item.feed, item.report_date) for item in details.items),
+            (("nextday_soc", date(2025, 7, 1)), ("nextday_soc", date(2025, 8, 1))),
+        )
+        self.assertEqual(details.missing_nextday_months, (date(2025, 9, 1),))
+
     def test_builds_canonical_ledger_plan_for_requested_feeds(self) -> None:
         start = datetime(2026, 8, 29, 0, 0, tzinfo=UTC)
         end = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)

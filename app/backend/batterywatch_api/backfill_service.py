@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import json
 import os
@@ -19,6 +20,10 @@ from .nemweb_archives import (
     DISPATCH_SCADA_FEED,
     plan_archive_range,
 )
+from .nextday_archives import (
+    NextDayMonthlyArchiveRef,
+    plan_nextday_monthly_archives,
+)
 
 UTC = timezone.utc
 _NEM_TIMEZONE = timezone(timedelta(hours=10))
@@ -30,6 +35,13 @@ _LEDGER_FEED_MAP = {
     DISPATCH_SCADA_FEED: "dispatch_scada",
     DISPATCHIS_PRICE_FEED: "dispatch_price",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class OperatorBackfillPlan:
+    spec: BackfillRunSpec
+    items: tuple[BackfillPlanItem, ...]
+    missing_nextday_months: tuple[date, ...]
 
 
 def _parse_utc(value: str) -> datetime:
@@ -51,6 +63,79 @@ def _candidate_dates(start: datetime, end: datetime) -> tuple[date, ...]:
     return tuple(first + timedelta(days=index) for index in range((last - first).days + 1))
 
 
+def build_operator_plan_details(
+    run_id: str,
+    start: datetime,
+    end: datetime,
+    *,
+    feeds: Iterable[str] = ("power", "price"),
+    ingestion_version: int = 1,
+    nextday_archives: Iterable[NextDayMonthlyArchiveRef] = (),
+) -> OperatorBackfillPlan:
+    """Build a bounded plan and retain explicit unavailable SOC months."""
+
+    try:
+        requested = tuple(feeds)
+    except (TypeError, ValueError):
+        raise ValueError("invalid backfill feeds") from None
+    allowed = {*_FEED_MAP, "soc"}
+    if (
+        not requested
+        or len(set(requested)) != len(requested)
+        or any(type(feed) is not str or feed not in allowed for feed in requested)
+    ):
+        raise ValueError("invalid backfill feeds")
+
+    archive_feeds = tuple(
+        archive_feed
+        for name, archive_feed in _FEED_MAP.items()
+        if name in requested
+    )
+    daily_items: tuple[BackfillPlanItem, ...] = ()
+    normalized_start: datetime | None = None
+    normalized_end: datetime | None = None
+    if archive_feeds:
+        candidates = _candidate_dates(start, end)
+        archived_dates = {feed: candidates for feed in archive_feeds}
+        archive_plan = plan_archive_range(
+            start,
+            end,
+            feeds=archive_feeds,
+            archived_dates=archived_dates,
+        )
+        normalized_start = archive_plan.start
+        normalized_end = archive_plan.end
+        daily_items = tuple(
+            BackfillPlanItem(
+                _LEDGER_FEED_MAP[item.feed],
+                item.report_date,
+                item.url,
+            )
+            for item in archive_plan.items
+        )
+
+    soc_items: tuple[BackfillPlanItem, ...] = ()
+    missing_months: tuple[date, ...] = ()
+    if "soc" in requested:
+        soc_plan = plan_nextday_monthly_archives(start, end, nextday_archives)
+        if normalized_start is None:
+            normalized_start = soc_plan.start
+            normalized_end = soc_plan.end
+        soc_items = tuple(
+            BackfillPlanItem("nextday_soc", item.report_month, item.url)
+            for item in soc_plan.items
+        )
+        missing_months = soc_plan.missing_months
+
+    if normalized_start is None or normalized_end is None:
+        raise ValueError("invalid backfill feeds")
+    return OperatorBackfillPlan(
+        BackfillRunSpec(run_id, normalized_start, normalized_end, ingestion_version),
+        daily_items + soc_items,
+        missing_months,
+    )
+
+
 def build_operator_plan(
     run_id: str,
     start: datetime,
@@ -58,49 +143,19 @@ def build_operator_plan(
     *,
     feeds: Iterable[str] = ("power", "price"),
     ingestion_version: int = 1,
+    nextday_archives: Iterable[NextDayMonthlyArchiveRef] = (),
 ) -> tuple[BackfillRunSpec, tuple[BackfillPlanItem, ...]]:
     """Build canonical bounded ledger items from explicit operator inputs."""
 
-    try:
-        requested = tuple(feeds)
-    except (TypeError, ValueError):
-        raise ValueError("invalid backfill feeds") from None
-    if (
-        not requested
-        or len(set(requested)) != len(requested)
-        or any(type(feed) is not str or feed not in _FEED_MAP for feed in requested)
-    ):
-        raise ValueError("invalid backfill feeds")
-    archive_feeds = tuple(
-        archive_feed
-        for name, archive_feed in _FEED_MAP.items()
-        if name in requested
-    )
-    candidates = _candidate_dates(start, end)
-    archived_dates = {feed: candidates for feed in archive_feeds}
-    archive_plan = plan_archive_range(
+    details = build_operator_plan_details(
+        run_id,
         start,
         end,
-        feeds=archive_feeds,
-        archived_dates=archived_dates,
+        feeds=feeds,
+        ingestion_version=ingestion_version,
+        nextday_archives=nextday_archives,
     )
-    items = tuple(
-        BackfillPlanItem(
-            _LEDGER_FEED_MAP[item.feed],
-            item.report_date,
-            item.url,
-        )
-        for item in archive_plan.items
-    )
-    return (
-        BackfillRunSpec(
-            run_id,
-            archive_plan.start,
-            archive_plan.end,
-            ingestion_version,
-        ),
-        items,
-    )
+    return details.spec, details.items
 
 
 def _summary(
@@ -194,7 +249,12 @@ def main(
         return 1
 
 
-__all__ = ["build_operator_plan", "main"]
+__all__ = [
+    "OperatorBackfillPlan",
+    "build_operator_plan",
+    "build_operator_plan_details",
+    "main",
+]
 
 
 if __name__ == "__main__":
