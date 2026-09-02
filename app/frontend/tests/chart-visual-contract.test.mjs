@@ -82,4 +82,8 @@ test("mobile charts default to power-only data with an opt-in price overlay", ()
   assert.match(source, /legend: \{ data: showPriceData \? \["Battery Power \(MW\)", "AEMO Price \(\$\/MWh\)", "Net Value \(\$\)"\] : \["Battery Power \(MW\)"\]/);
 });
 
-
+test("crossing the mobile breakpoint reapplies responsive chart layout", () => {
+  assert.match(source, /const applyResponsiveLayout = \(\) => \{[\s\S]*?const isMobile = mobileQuery\.matches/);
+  assert.match(source, /mobileQuery\.addEventListener\("change", applyResponsiveLayout\)/);
+  assert.match(source, /mobileQuery\.removeEventListener\("change", applyResponsiveLayout\)/);
+});

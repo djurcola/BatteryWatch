@@ -27,6 +27,29 @@ test("FCAS summaries expose enablement counts and availability maxima", () => {
   assert.match(source, /max_actual_availability_mw/);
 });
 
+test("FCAS selected-range lifecycle stays separate from endless energy paging", () => {
+  const fcasRequest = source.indexOf("fetch(`/api/fcas?");
+  assert.ok(fcasRequest >= 0);
+  const fcasEffectStart = source.lastIndexOf("  useEffect(() => {", fcasRequest);
+  const fcasEffectEnd = source.indexOf("\n  }, [selected, range]);", fcasRequest);
+  assert.ok(fcasEffectStart >= 0);
+  assert.ok(fcasEffectEnd > fcasRequest);
+  const fcasEffect = source.slice(fcasEffectStart, fcasEffectEnd);
+  assert.match(fcasEffect, /new AbortController\(\)/);
+  assert.match(fcasEffect, /setFcas\(null\)/);
+  assert.match(fcasEffect, /controller\.abort\(\)/);
+  assert.doesNotMatch(fcasEffect, /fetchSeries|bufferRef|adjacentRequests|setSeries|setVisibleNetValue/);
+  assert.match(source, /fetchSeries\(currentGenerator, chunk\.start, chunk\.end, controller\.signal\)/);
+});
+
+test("FCAS target chart and service summaries remain visible in the panel", () => {
+  assert.match(source, /echarts\.init\(fcasChartRef\.current\)/);
+  assert.match(source, /target_mw/);
+  assert.match(source, /fcas\.selected_services\.map/);
+  assert.match(source, /fcas-summary-grid/);
+  assert.match(source, /fcas-state-\$\{fcas\.publication_state\}/);
+});
+
 test("FCAS panel exposes publication status and remains usable on mobile", () => {
   assert.match(source, /not yet public/);
   assert.doesNotMatch(source, /inactive/);
