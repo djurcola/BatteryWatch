@@ -87,5 +87,3 @@ test("crossing the mobile breakpoint reapplies responsive chart layout", () => {
   assert.match(source, /mobileQuery\.addEventListener\("change", applyResponsiveLayout\)/);
   assert.match(source, /mobileQuery\.removeEventListener\("change", applyResponsiveLayout\)/);
 });
-
-
