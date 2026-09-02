@@ -12,7 +12,15 @@ ALTER TABLE dispatch_scada_artifacts
         OR source_url =
             'https://www.nemweb.com.au/REPORTS/ARCHIVE/Dispatch_SCADA/'
             || 'PUBLIC_DISPATCHSCADA_'
-            || substring(zip_filename FROM 22 FOR 8)
+            || CASE
+                WHEN substring(zip_filename FROM 30 FOR 4) = '0000'
+                    THEN to_char(
+                        to_date(substring(zip_filename FROM 22 FOR 8), 'YYYYMMDD')
+                        - INTERVAL '1 day',
+                        'YYYYMMDD'
+                    )
+                ELSE substring(zip_filename FROM 22 FOR 8)
+            END
             || '.zip#' || zip_filename
     );
 
@@ -25,7 +33,15 @@ ALTER TABLE dispatch_price_artifacts
         OR source_url =
             'https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/'
             || 'PUBLIC_DISPATCHIS_'
-            || substring(zip_filename FROM 19 FOR 8)
+            || CASE
+                WHEN substring(zip_filename FROM 27 FOR 4) = '0000'
+                    THEN to_char(
+                        to_date(substring(zip_filename FROM 19 FOR 8), 'YYYYMMDD')
+                        - INTERVAL '1 day',
+                        'YYYYMMDD'
+                    )
+                ELSE substring(zip_filename FROM 19 FOR 8)
+            END
             || '.zip#' || zip_filename
     );
 

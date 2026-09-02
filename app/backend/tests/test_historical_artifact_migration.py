@@ -238,6 +238,9 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         self.assertIn("REPORTS/CURRENT/DispatchIS_Reports/", migration)
         self.assertIn("REPORTS/ARCHIVE/DispatchIS_Reports/", migration)
         self.assertEqual(migration.count("|| '.zip#' || zip_filename"), 2)
+        self.assertIn("substring(zip_filename FROM 30 FOR 4) = '0000'", migration)
+        self.assertIn("substring(zip_filename FROM 27 FOR 4) = '0000'", migration)
+        self.assertEqual(migration.count("- INTERVAL '1 day'"), 2)
         self.assertIn("009_allow_archive_urls.sql", migrate_script)
         self.assertLess(
             migrate_script.index("008_authoritative_soc.sql"),
