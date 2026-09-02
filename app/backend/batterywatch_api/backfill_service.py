@@ -187,6 +187,12 @@ def _summary(
         "nextday_applied_record_count": result.nextday_applied_record_count,
         "nextday_null_count": result.nextday_null_count,
         "nextday_percentage_count": result.nextday_percentage_count,
+        "nextday_fcas_raw_inserted_count": result.nextday_fcas_raw_inserted_count,
+        "nextday_fcas_raw_replayed_count": result.nextday_fcas_raw_replayed_count,
+        "nextday_fcas_effective_candidate_count": result.nextday_fcas_effective_candidate_count,
+        "nextday_fcas_effective_applied_count": result.nextday_fcas_effective_applied_count,
+        "nextday_fcas_effective_replayed_count": result.nextday_fcas_effective_replayed_count,
+        "nextday_fcas_reported_service_count": result.nextday_fcas_reported_service_count,
         "missing_nextday_months": tuple(
             month.isoformat() for month in missing_nextday_months
         ),

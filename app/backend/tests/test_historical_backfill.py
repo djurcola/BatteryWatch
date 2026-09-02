@@ -148,6 +148,7 @@ class HistoricalBackfillTests(unittest.TestCase):
             claim: BackfillClaim,
             range_start: datetime,
             range_end: datetime,
+            *,
             ingestion_version: int,
         ) -> HistoricalNextDayBackfillResult:
             self.assertEqual(

@@ -10,8 +10,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
+import json
 from math import isfinite
-from collections.abc import Hashable, Iterable, Iterator, MutableMapping
+from collections.abc import Hashable, Iterable, Iterator, Mapping, MutableMapping
+from types import MappingProxyType
 from typing import Any, Literal, Protocol, TypeVar
 
 UTC = timezone.utc
@@ -47,7 +50,7 @@ def _number(value: float, field: str) -> float:
         raise ValueError(f"{field} must be numeric")
     try:
         normalized = float(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(f"{field} must be numeric") from exc
     if not isfinite(normalized):
         raise ValueError(f"{field} must be finite")
@@ -334,6 +337,173 @@ class RegionalPrice5m(_VersionedRecord):
         return self.price_aud_per_mwh is not None and self.price_aud_per_mwh < 0
 
 
+FCAS_SERVICES = (
+    "raise_1s",
+    "lower_1s",
+    "raise_6s",
+    "lower_6s",
+    "raise_60s",
+    "lower_60s",
+    "raise_5m",
+    "lower_5m",
+    "raise_reg",
+    "lower_reg",
+)
+FCAS_CLEARANCE_EPSILON_MW = 0.000001
+_VALID_FCAS_STATUS_FLAGS = frozenset((0, 1, 2, 3, 4))
+
+
+def _fcas_number(value: object, field: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        raise ValueError(f"{field} must be numeric")
+    try:
+        normalized = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(f"{field} must be numeric") from exc
+    if not isfinite(normalized):
+        raise ValueError(f"{field} must be finite")
+    return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class FcasService5m:
+    """One service's grouped FCAS evidence for an effective interval."""
+
+    target_mw: float | None = None
+    enablement_status: int | None = None
+    actual_availability_mw: float | None = None
+
+    def __post_init__(self) -> None:
+        target = _fcas_number(self.target_mw, "target_mw")
+        actual = _fcas_number(
+            self.actual_availability_mw, "actual_availability_mw"
+        )
+        if target is not None and target < 0:
+            raise ValueError("target_mw must be non-negative")
+        if actual is not None and actual < 0:
+            raise ValueError("actual_availability_mw must be non-negative")
+        status = self.enablement_status
+        if status is not None and (
+            isinstance(status, bool)
+            or type(status) is not int
+            or status not in _VALID_FCAS_STATUS_FLAGS
+        ):
+            raise ValueError("enablement_status must be a supported integer")
+        object.__setattr__(self, "target_mw", target)
+        object.__setattr__(self, "actual_availability_mw", actual)
+
+    @property
+    def reported(self) -> bool:
+        return any(
+            value is not None
+            for value in (
+                self.target_mw,
+                self.enablement_status,
+                self.actual_availability_mw,
+            )
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return self.enablement_status in (1, 3)
+
+    @property
+    def trapped(self) -> bool:
+        return self.enablement_status == 3
+
+    @property
+    def stranded(self) -> bool:
+        return self.enablement_status == 4
+
+    @property
+    def cleared(self) -> bool:
+        return (
+            self.target_mw is not None
+            and self.target_mw > FCAS_CLEARANCE_EPSILON_MW
+        )
+
+    @property
+    def participating(self) -> bool:
+        return self.cleared and self.enabled
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratorFcas5m(_VersionedRecord):
+    """One effective grouped FCAS record per generator and interval."""
+
+    generator_id: str
+    interval_start: datetime
+    services: Mapping[str, FcasService5m]
+    last_changed: datetime
+    report_timestamp: datetime
+    downloaded_at: datetime
+    intervention: int
+    run_number: int
+    dispatch_interval: str
+    ingestion_version: int
+    correction_version: int
+    source_artifact_sha256: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "generator_id", _text(self.generator_id, "generator_id"))
+        object.__setattr__(self, "interval_start", aligned_5m(self.interval_start))
+        if not isinstance(self.services, Mapping):
+            raise ValueError("services must be a mapping")
+        if set(self.services) != set(FCAS_SERVICES):
+            raise ValueError("services must contain the canonical FCAS services")
+        if any(
+            not isinstance(self.services[service], FcasService5m)
+            for service in FCAS_SERVICES
+        ):
+            raise ValueError("services must contain typed FCAS values")
+        object.__setattr__(
+            self,
+            "services",
+            MappingProxyType(
+                {service: self.services[service] for service in FCAS_SERVICES}
+            ),
+        )
+        last_changed = utc_timestamp(self.last_changed, "last_changed")
+        report_timestamp = utc_timestamp(self.report_timestamp, "report_timestamp")
+        downloaded_at = utc_timestamp(self.downloaded_at, "downloaded_at")
+        if last_changed > report_timestamp:
+            raise ValueError("last_changed must not follow report_timestamp")
+        if report_timestamp > downloaded_at:
+            raise ValueError("report_timestamp must not follow downloaded_at")
+        object.__setattr__(self, "last_changed", last_changed)
+        object.__setattr__(self, "report_timestamp", report_timestamp)
+        object.__setattr__(self, "downloaded_at", downloaded_at)
+        if type(self.intervention) is not int or self.intervention not in (0, 1):
+            raise ValueError("intervention must be 0 or 1")
+        object.__setattr__(self, "run_number", _version(self.run_number, "run_number"))
+        if self.run_number == 0:
+            raise ValueError("run_number must be positive")
+        object.__setattr__(
+            self,
+            "dispatch_interval",
+            _text(self.dispatch_interval, "dispatch_interval"),
+        )
+        ingestion = _version(self.ingestion_version, "ingestion_version")
+        correction = _version(self.correction_version, "correction_version")
+        object.__setattr__(self, "ingestion_version", ingestion)
+        object.__setattr__(self, "correction_version", correction)
+        object.__setattr__(
+            self,
+            "source_artifact_sha256",
+            _text(self.source_artifact_sha256, "source_artifact_sha256"),
+        )
+
+    @property
+    def logical_key(self) -> tuple[str, datetime]:
+        return (self.generator_id, self.interval_start)
+
+    @property
+    def timestamp(self) -> datetime:
+        return self.interval_start
+
+
 # Short aliases make the contract convenient without losing the table-shaped names.
 GeneratorRecord = GeneratorMetadata
 PowerRecord = GeneratorPower5m
@@ -369,6 +539,13 @@ class StorageRepository(Protocol):
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> tuple[GeneratorSoc5m, ...]: ...
+
+    def list_fcas(
+        self,
+        generator_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> tuple[GeneratorFcas5m, ...]: ...
 
     def list_prices(
         self,
@@ -421,6 +598,7 @@ class InMemoryRepository:
         self._generators: dict[tuple[str], GeneratorMetadata] = {}
         self._power: dict[tuple[str, datetime], GeneratorPower5m] = {}
         self._soc: dict[tuple[str, datetime], GeneratorSoc5m] = {}
+        self._fcas: dict[tuple[str, datetime], GeneratorFcas5m] = {}
         self._prices: dict[tuple[str, datetime], RegionalPrice5m] = {}
 
     def upsert_generator(self, record: GeneratorMetadata) -> bool:
@@ -486,6 +664,23 @@ class InMemoryRepository:
         values = [
             record
             for (record_dimension, interval_start), record in self._soc.items()
+            if record_dimension == dimension
+            and (normalized_start is None or interval_start >= normalized_start)
+            and (normalized_end is None or interval_start < normalized_end)
+        ]
+        return tuple(sorted(values, key=lambda record: record.interval_start))
+
+    def list_fcas(
+        self,
+        generator_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> tuple[GeneratorFcas5m, ...]:
+        dimension = _text(generator_id, "generator_id")
+        normalized_start, normalized_end = _window(start, end)
+        values = [
+            record
+            for (record_dimension, interval_start), record in self._fcas.items()
             if record_dimension == dimension
             and (normalized_start is None or interval_start >= normalized_start)
             and (normalized_end is None or interval_start < normalized_end)
@@ -726,6 +921,18 @@ WHERE generator_id = %s
 ORDER BY interval_start ASC
 """
 
+_FCAS_LIST_SQL = """
+SELECT generator_id, interval_start, fcas_services,
+       last_changed, report_timestamp, downloaded_at,
+       intervention, run_number, dispatch_interval,
+       ingestion_version, correction_version, source_artifact_sha256
+FROM generator_fcas_5m
+WHERE generator_id = %s
+  AND (%s::timestamptz IS NULL OR interval_start >= %s::timestamptz)
+  AND (%s::timestamptz IS NULL OR interval_start < %s::timestamptz)
+ORDER BY interval_start ASC
+"""
+
 _PRICE_LIST_SQL = """
 SELECT region, interval_start, price_aud_per_mwh, price_status,
        intervention, apc_flag, market_suspended, source_id, source_timestamp,
@@ -793,6 +1000,55 @@ def _price_from_row(row: tuple[Any, ...]) -> RegionalPrice5m:
         ingestion_version=row[9],
         correction_version=row[10],
         quality_flags=tuple(row[11] or ()),
+    )
+
+
+def _fcas_services_from_value(value: Any) -> dict[str, FcasService5m]:
+    if hasattr(value, "obj"):
+        value = value.obj
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid stored FCAS service map") from exc
+    if not isinstance(value, Mapping) or set(value) != set(FCAS_SERVICES):
+        raise ValueError("invalid stored FCAS service map")
+    services: dict[str, FcasService5m] = {}
+    for service in FCAS_SERVICES:
+        raw = value.get(service)
+        if isinstance(raw, FcasService5m):
+            services[service] = raw
+        elif isinstance(raw, Mapping):
+            if set(raw) != {
+                "target_mw",
+                "enablement_status",
+                "actual_availability_mw",
+            }:
+                raise ValueError("invalid stored FCAS service value")
+            services[service] = FcasService5m(
+                target_mw=raw.get("target_mw"),
+                enablement_status=raw.get("enablement_status"),
+                actual_availability_mw=raw.get("actual_availability_mw"),
+            )
+        else:
+            raise ValueError("invalid stored FCAS service value")
+    return services
+
+
+def _fcas_from_row(row: tuple[Any, ...]) -> GeneratorFcas5m:
+    return GeneratorFcas5m(
+        generator_id=row[0],
+        interval_start=row[1],
+        services=_fcas_services_from_value(row[2]),
+        last_changed=row[3],
+        report_timestamp=row[4],
+        downloaded_at=row[5],
+        intervention=row[6],
+        run_number=row[7],
+        dispatch_interval=row[8],
+        ingestion_version=row[9],
+        correction_version=row[10],
+        source_artifact_sha256=row[11],
     )
 
 
@@ -976,6 +1232,23 @@ class PostgreSQLRepository:
         ]
         return tuple(sorted(values, key=lambda record: record.interval_start))
 
+    def list_fcas(
+        self,
+        generator_id: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> tuple[GeneratorFcas5m, ...]:
+        dimension = _text(generator_id, "generator_id")
+        normalized_start, normalized_end = _window(start, end)
+        values = [
+            _fcas_from_row(row)
+            for row in self._many(
+                _FCAS_LIST_SQL,
+                self._window_parameters(dimension, normalized_start, normalized_end),
+            )
+        ]
+        return tuple(sorted(values, key=lambda record: record.interval_start))
+
     def list_prices(
         self,
         region: str,
@@ -1006,6 +1279,10 @@ __all__ = [
     "GeneratorMetadata",
     "GeneratorPower5m",
     "GeneratorSoc5m",
+    "FcasService5m",
+    "GeneratorFcas5m",
+    "FCAS_SERVICES",
+    "FCAS_CLEARANCE_EPSILON_MW",
     "RegionalPrice5m",
     "RecordProvenance",
     "StorageRepository",

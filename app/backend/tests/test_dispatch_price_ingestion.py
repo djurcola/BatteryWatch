@@ -247,11 +247,11 @@ class DispatchPriceMigrationTests(unittest.TestCase):
         self.assertIn("raw_zip BYTEA NOT NULL", migration)
         self.assertIn("PUBLIC_DISPATCHIS_", migration)
         self.assertIn("003_dispatch_price_artifacts.sql", migrate_script)
-        self.assertIn("SELECT count(*) = 13", migrate_script)
+        self.assertIn("SELECT count(*) = 15", migrate_script)
         self.assertIn("'dispatch_price_artifacts'", migrate_script)
         self.assertIn("004_historical_backfill_ledger.sql", migrate_script)
         self.assertIn("database_url=$BATTERYWATCH_DATABASE_URL", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
         self.assertNotIn("export PGDATABASE=", migrate_script)
 
 

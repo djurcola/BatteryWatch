@@ -46,10 +46,10 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
 
         self.assertIn("004_historical_backfill_ledger.sql", migrate_script)
         self.assertIn("005_historical_source_artifacts.sql", migrate_script)
-        self.assertIn("SELECT count(*) = 13", migrate_script)
+        self.assertIn("SELECT count(*) = 15", migrate_script)
         for table in ("historical_source_artifacts", "historical_backfill_item_artifacts"):
             self.assertIn(f"'{table}'", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
 
         upper = migration.upper()
         for forbidden in ("DROP ", "ALTER ", "TRUNCATE "):
@@ -88,7 +88,7 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         ):
             self.assertIn(f"'{event_type}'", migration)
         self.assertIn("006_artifact_recorded_event.sql", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
         self.assertNotIn("TRUNCATE ", upper)
         self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
 
@@ -115,7 +115,7 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         self.assertIn("historical_backfill_events_details_check", migration)
         self.assertIn("jsonb_typeof(details) = 'object'", migration)
         self.assertIn("007_backfill_runtime_details.sql", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
         self.assertNotIn("TRUNCATE ", upper)
         self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
 
@@ -214,9 +214,103 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
             migrate_script.index("007_backfill_runtime_details.sql"),
             migrate_script.index("008_authoritative_soc.sql"),
         )
-        self.assertIn("SELECT count(*) = 13", migrate_script)
+        self.assertIn("SELECT count(*) = 15", migrate_script)
         self.assertIn("'raw_nextday_soc_observations'", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
+        for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
+            self.assertNotIn(forbidden, upper)
+
+    def test_adds_grouped_nextday_fcas_raw_and_effective_schema(self) -> None:
+        app_root = Path(__file__).resolve().parents[2]
+        migration_path = app_root / "migrations" / "010_nextday_fcas.sql"
+        self.assertTrue(migration_path.exists(), "010 Next Day FCAS migration is missing")
+
+        migration = migration_path.read_text(encoding="utf-8")
+        migrate_script = (app_root / "deploy" / "migrate.sh").read_text(encoding="utf-8")
+        upper = migration.upper()
+
+        self.assertIn("BEGIN;", upper)
+        self.assertIn("COMMIT;", upper)
+        self.assertIn("CREATE TABLE IF NOT EXISTS raw_nextday_fcas_observations", migration)
+        self.assertIn("CREATE TABLE IF NOT EXISTS generator_fcas_5m", migration)
+        self.assertIn("fcas_services JSONB NOT NULL", migration)
+        self.assertIn("nextday_fcas_map_jsonb_valid", migration)
+        self.assertIn("jsonb_object_length(value) <> 3", migration)
+        self.assertIn("jsonb_object_length(value) <> 10", migration)
+        self.assertIn("value ?& ARRAY", migration)
+        self.assertIn("(value -> 'target_mw') < '0'::jsonb", migration)
+        self.assertIn("(value -> 'actual_availability_mw') < '0'::jsonb", migration)
+        self.assertIn("target_type NOT IN ('null', 'number')", migration)
+        self.assertIn("status_type NOT IN ('null', 'number')", migration)
+        self.assertIn("actual_type NOT IN ('null', 'number')", migration)
+        self.assertIn(
+            "NOT IN ('0', '1', '2', '3', '4')",
+            migration,
+        )
+        self.assertNotIn("::DOUBLE PRECISION", upper)
+        self.assertIn("CREATE OR REPLACE FUNCTION", upper)
+        self.assertEqual(migration.count("CREATE TABLE IF NOT EXISTS"), 2)
+        self.assertEqual(migration.count("CREATE INDEX IF NOT EXISTS"), 4)
+        self.assertIn("PRIMARY KEY (generator_id, interval_start)", migration)
+        self.assertIn(
+            "PRIMARY KEY (\n        artifact_sha256,\n        generator_id,\n        interval_start,",
+            migration,
+        )
+        for service in (
+            "raise_1s",
+            "lower_1s",
+            "raise_6s",
+            "lower_6s",
+            "raise_60s",
+            "lower_60s",
+            "raise_5m",
+            "lower_5m",
+            "raise_reg",
+            "lower_reg",
+        ):
+            self.assertIn(service, migration)
+        for field in ("target_mw", "enablement_status", "actual_availability_mw"):
+            self.assertIn(f"'{field}'", migration)
+        for column in (
+            "artifact_sha256",
+            "generator_id",
+            "interval_start",
+            "intervention",
+            "run_number",
+            "dispatch_interval",
+            "last_changed",
+            "report_timestamp",
+            "downloaded_at",
+            "ingestion_version",
+            "correction_version",
+            "source_artifact_sha256",
+        ):
+            self.assertIn(column, migration)
+        for constraint in (
+            "CHECK (intervention IN (0, 1))",
+            "CHECK (run_number > 0)",
+            "CHECK (ingestion_version >= 0)",
+            "CHECK (correction_version >= 0)",
+            "CHECK (last_changed <= report_timestamp)",
+            "CHECK (report_timestamp <= downloaded_at)",
+        ):
+            self.assertGreaterEqual(migration.count(constraint), 2)
+        self.assertIn("UNIQUE (", migration)
+        self.assertIn("REFERENCES historical_source_artifacts", migration)
+        self.assertIn("REFERENCES generators", migration)
+        self.assertIn("ON DELETE RESTRICT", migration)
+        self.assertIn("raw_nextday_fcas_observations_artifact_time_idx", migration)
+        self.assertIn("raw_nextday_fcas_observations_generator_time_idx", migration)
+        self.assertIn("generator_fcas_5m_time_idx", migration)
+        self.assertIn("010_nextday_fcas.sql", migrate_script)
+        self.assertLess(
+            migrate_script.index("009_allow_archive_urls.sql"),
+            migrate_script.index("010_nextday_fcas.sql"),
+        )
+        self.assertIn("SELECT count(*) = 15", migrate_script)
+        self.assertIn("'raw_nextday_fcas_observations'", migrate_script)
+        self.assertIn("'generator_fcas_5m'", migrate_script)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
         for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
             self.assertNotIn(forbidden, upper)
 
@@ -246,7 +340,7 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
             migrate_script.index("008_authoritative_soc.sql"),
             migrate_script.index("009_allow_archive_urls.sql"),
         )
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
         for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
             self.assertNotIn(forbidden, upper)
 

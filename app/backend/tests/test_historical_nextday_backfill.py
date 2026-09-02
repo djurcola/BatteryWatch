@@ -24,6 +24,7 @@ from batterywatch_api.nextday_monthly_extraction import (
     NextDayDailyMemberRef,
     NextDayMonthlyArchiveManifest,
 )
+from batterywatch_api.nextday_fcas_ingestion import NextDayFcasIngestionResult
 from batterywatch_api.nextday_soc_ingestion import NextDaySocIngestionResult
 
 UTC = timezone.utc
@@ -277,6 +278,144 @@ class HistoricalNextDayBackfillTests(unittest.TestCase):
             HistoricalNextDayBackfillResult(
                 "a" * 64, False, 2, 0, 2, 2, 0, 2, 2, 0, 0, 2
             ),
+        )
+
+    def test_one_daily_artifact_drives_soc_and_fcas_and_fcas_failure_does_not_complete(self) -> None:
+        raw_outer = b"monthly outer"
+        downloaded_at = datetime(2026, 8, 30, tzinfo=UTC)
+        member = _member(1)
+        reference = NextDayMonthlyArchiveRef(
+            date(2025, 7, 1),
+            "PUBLIC_NEXT_DAY_DISPATCH_20250701.zip",
+            OUTER_URL,
+            len(raw_outer),
+            downloaded_at,
+        )
+        manifest = NextDayMonthlyArchiveManifest(reference, "a" * 64, (member,))
+        source_observation = SimpleNamespace(
+            interval_start=datetime(2025, 7, 1, 12, tzinfo=UTC),
+            fcas=object(),
+        )
+        soc_calls: list[tuple[object, ...]] = []
+        fcas_calls: list[tuple[object, ...]] = []
+        events: list[str] = []
+
+        def read_daily(received_manifest, payload, received_member):
+            raw = b"zip-1"
+            return NextDayDailyArtifact(
+                received_member,
+                hashlib.sha256(raw).hexdigest(),
+                raw,
+                received_member.filename.removesuffix(".zip") + ".CSV",
+                b"day-1",
+            )
+
+        def parse(payload, **kwargs):
+            return (source_observation,)
+
+        class SocIngestor:
+            def __init__(self, connection):
+                pass
+
+            def ingest(self, observations, assets):
+                events.append("soc")
+                soc_calls.append(tuple(observations))
+                return NextDaySocIngestionResult(1, 1, 0, 1, 1, 0, 0, 1)
+
+        class FcasIngestor:
+            def __init__(self, connection):
+                pass
+
+            def ingest(self, observations):
+                events.append("fcas")
+                fcas_calls.append(tuple(observations))
+                return NextDayFcasIngestionResult(1, 1, 0, 1, 1, 0, 10)
+
+        claim = BackfillClaim(
+            "soc-fcas-202507",
+            "nextday_soc",
+            date(2025, 7, 1),
+            OUTER_URL,
+            1,
+        )
+        result = run_nextday_soc_backfill_claim(
+            "postgresql://redacted",
+            ASSETS,
+            claim,
+            datetime(2025, 7, 1, tzinfo=UTC),
+            datetime(2025, 7, 1, 14, tzinfo=UTC),
+            ingestion_version=3,
+            connect=lambda *args, **kwargs: FakeConnection(),
+            fetch=lambda url, **kwargs: NemwebHttpResource(
+                url, url, raw_outer, "application/zip", None, None
+            ),
+            clock=lambda: downloaded_at,
+            ledger_factory=FakeLedger,
+            registrar_factory=FakeOuterRegistrar,
+            nested_registrar_factory=FakeNestedRegistrar,
+            validate_archive=lambda ref, payload: manifest,
+            read_daily=read_daily,
+            parse_csv=parse,
+            ingestor_factory=SocIngestor,
+            fcas_ingestor_factory=FcasIngestor,
+        )
+
+        self.assertEqual(soc_calls, [(source_observation,)])
+        self.assertEqual(fcas_calls, [(source_observation,)])
+        self.assertEqual(events, ["soc", "fcas"])
+        self.assertEqual(
+            FakeLedger.completions,
+            [(claim.run_id, BackfillItemCompletion(False, 1))],
+        )
+        self.assertEqual(FakeLedger.failures, [])
+        self.assertEqual(result.fcas_raw_inserted, 1)
+        self.assertEqual(result.fcas_effective_applied, 1)
+        self.assertEqual(result.fcas_reported_service_count, 10)
+
+        FakeLedger.completions = []
+        FakeLedger.failures = []
+        events.clear()
+
+        class FailingFcasIngestor(FcasIngestor):
+            def ingest(self, observations):
+                events.append("fcas")
+                fcas_calls.append(tuple(observations))
+                raise RuntimeError("FCAS projection failed")
+
+        failed_claim = BackfillClaim(
+            "soc-fcas-failed-202507",
+            "nextday_soc",
+            date(2025, 7, 1),
+            OUTER_URL,
+            1,
+        )
+        with self.assertRaisesRegex(RuntimeError, "FCAS projection failed"):
+            run_nextday_soc_backfill_claim(
+                "postgresql://redacted",
+                ASSETS,
+                failed_claim,
+                datetime(2025, 7, 1, tzinfo=UTC),
+                datetime(2025, 7, 1, 14, tzinfo=UTC),
+                ingestion_version=3,
+                connect=lambda *args, **kwargs: FakeConnection(),
+                fetch=lambda url, **kwargs: NemwebHttpResource(
+                    url, url, raw_outer, "application/zip", None, None
+                ),
+                clock=lambda: downloaded_at,
+                ledger_factory=FakeLedger,
+                registrar_factory=FakeOuterRegistrar,
+                nested_registrar_factory=FakeNestedRegistrar,
+                validate_archive=lambda ref, payload: manifest,
+                read_daily=read_daily,
+                parse_csv=parse,
+                ingestor_factory=SocIngestor,
+                fcas_ingestor_factory=FailingFcasIngestor,
+            )
+        self.assertEqual(events, ["soc", "fcas"])
+        self.assertEqual(FakeLedger.completions, [])
+        self.assertEqual(
+            FakeLedger.failures,
+            [(failed_claim.run_id, "RuntimeError")],
         )
 
     def test_exact_replay_is_classified_deterministically(self) -> None:
