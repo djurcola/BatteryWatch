@@ -41,10 +41,10 @@ class HealthResponse(ApiModel):
 
 class SeriesPoint(ApiModel):
     timestamp: datetime
-    power_mw: float
+    power_mw: float | None
     soc_percent: float | None
     price_aud_per_mwh: float | None
-    energy_mwh: float
+    energy_mwh: float | None
     gross_value_aud: float | None
     charging_cost_aud: float | None
     net_energy_value_aud: float | None
@@ -67,9 +67,15 @@ class SeriesSummary(ApiModel):
 
 
 class Coverage(ApiModel):
+    expected_intervals: int = Field(ge=0)
+    observed_power_intervals: int = Field(ge=0)
+    observed_price_intervals: int = Field(ge=0)
+    missing_power_intervals: int = Field(ge=0)
+    missing_price_intervals: int = Field(ge=0)
+    both_missing_intervals: int = Field(ge=0)
+    power_coverage_percent: float = Field(ge=0, le=100)
     total_intervals: int = Field(ge=0)
     price_intervals: int = Field(ge=0)
-    missing_price_intervals: int = Field(ge=0)
     price_coverage_percent: float = Field(ge=0, le=100)
     soc_intervals: int = Field(ge=0)
     missing_soc_intervals: int = Field(ge=0)

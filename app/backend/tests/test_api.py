@@ -38,9 +38,12 @@ class BatteryWatchApiTests(unittest.TestCase):
             400,
         )
         self.assertEqual(
-            self.client.get("/api/series", params={"generator": "BWTEST1", "start": "2026-01-01T00:00:00Z", "end": "2026-01-09T00:00:00Z"}).status_code,
-            400,
+            self.client.get("/api/series", params={"generator": "BWTEST1", "start": "2026-01-01T00:00:00Z", "end": "2026-01-31T00:00:00Z"}).status_code,
+            200,
         )
+        over = self.client.get("/api/series", params={"generator": "BWTEST1", "start": "2026-01-01T00:00:00Z", "end": "2026-01-31T00:00:01Z"})
+        self.assertEqual(over.status_code, 400)
+        self.assertEqual(over.json()["detail"], "Requested range exceeds the 30-day limit")
 
 
 if __name__ == "__main__":

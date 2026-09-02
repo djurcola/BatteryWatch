@@ -350,7 +350,7 @@ class DatabaseSeriesApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
-    def test_database_series_rejects_ranges_over_seven_days(self):
+    def test_database_series_rejects_ranges_over_thirty_days(self):
         def provider() -> AbstractContextManager[StorageRepository]:
             raise AssertionError("bounds must be validated before the provider")
 
@@ -365,11 +365,69 @@ class DatabaseSeriesApiTests(unittest.TestCase):
             params={
                 "generator": "DB-UTC",
                 "start": "2026-01-01T00:00:00Z",
-                "end": "2026-01-08T00:00:01Z",
+                "end": "2026-01-31T00:00:01Z",
             },
         )
 
         self.assertEqual(response.status_code, 400)
+
+    def test_database_series_accepts_exactly_thirty_days_and_rejects_one_second_over(self):
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        metadata = GeneratorMetadata(
+            generator_id="DB-30D",
+            site_name="Thirty Day Battery",
+            region="NSW1",
+            capacity_mw=1.0,
+            storage_capacity_mwh=2.0,
+            source_id="registry",
+            source_timestamp=start,
+            ingestion_version=1,
+        )
+
+        @contextmanager
+        def provider():
+            repository = InMemoryRepository()
+            repository.upsert_generator(metadata)
+            yield repository
+
+        client = TestClient(
+            main.create_app(
+                mode="database",
+                health_tracer=lambda: True,
+                repository_provider=provider,
+            )
+        )
+        exact = client.get(
+            "/api/series",
+            params={
+                "generator": "DB-30D",
+                "start": start.isoformat().replace("+00:00", "Z"),
+                "end": (start + timedelta(days=30)).isoformat().replace("+00:00", "Z"),
+            },
+        )
+        self.assertEqual(exact.status_code, 200)
+
+        def rejecting_provider() -> AbstractContextManager[StorageRepository]:
+            raise AssertionError("over-limit bounds must be validated before the provider")
+
+        over = TestClient(
+            main.create_app(
+                mode="database",
+                health_tracer=lambda: True,
+                repository_provider=rejecting_provider,
+            )
+        ).get(
+            "/api/series",
+            params={
+                "generator": "DB-30D",
+                "start": start.isoformat().replace("+00:00", "Z"),
+                "end": (start + timedelta(days=30, seconds=1)).isoformat().replace(
+                    "+00:00", "Z"
+                ),
+            },
+        )
+        self.assertEqual(over.status_code, 400)
+        self.assertEqual(over.json()["detail"], "Requested range exceeds the 30-day limit")
 
     def test_database_series_accepts_non_aligned_utc_query_bounds(self):
         metadata = GeneratorMetadata(
@@ -625,6 +683,104 @@ class DatabaseSeriesApiTests(unittest.TestCase):
         self.assertEqual(body["provenance"]["power_source"], "dispatch")
         self.assertEqual(body["provenance"]["price_source"], "rrp")
         self.assertEqual(body["provenance"]["soc_source"], "telemetry")
+
+    def test_database_series_emits_aligned_null_grid_and_gap_coverage(self):
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = start + timedelta(minutes=20)
+        metadata = GeneratorMetadata(
+            generator_id="DB-GAPS",
+            site_name="Gap Battery",
+            region="NSW1",
+            capacity_mw=2.0,
+            storage_capacity_mwh=4.0,
+            source_id="registry",
+            source_timestamp=start,
+            ingestion_version=1,
+        )
+        power = tuple(
+            GeneratorPower5m(
+                generator_id="DB-GAPS",
+                interval_start=start + timedelta(minutes=minutes),
+                power_mw=value,
+                source_id="dispatch",
+                source_timestamp=start,
+                ingestion_version=1,
+            )
+            for minutes, value in ((0, 0.0), (10, 2.0))
+        )
+        prices = tuple(
+            RegionalPrice5m(
+                region="NSW1",
+                interval_start=start + timedelta(minutes=minutes),
+                price_aud_per_mwh=value,
+                price_status="missing" if value is None else "available",
+                source_id="rrp",
+                source_timestamp=start,
+                ingestion_version=1,
+            )
+            for minutes, value in ((0, 100.0), (5, 80.0), (10, None))
+        )
+
+        @contextmanager
+        def provider():
+            class Repository(InMemoryRepository):
+                def read_generator(self, generator_id):
+                    return metadata
+
+                def list_power(self, generator_id, start=None, end=None):
+                    return power
+
+                def list_soc(self, generator_id, start=None, end=None):
+                    return ()
+
+                def list_prices(self, region, start=None, end=None):
+                    return prices
+
+            yield Repository()
+
+        body = TestClient(
+            main.create_app(
+                mode="database",
+                health_tracer=lambda: True,
+                repository_provider=provider,
+            )
+        ).get(
+            "/api/series",
+            params={
+                "generator": "DB-GAPS",
+                "start": start.isoformat().replace("+00:00", "Z"),
+                "end": end.isoformat().replace("+00:00", "Z"),
+            },
+        ).json()
+
+        self.assertEqual(
+            [point["timestamp"] for point in body["points"]],
+            [
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:05:00Z",
+                "2026-01-01T00:10:00Z",
+                "2026-01-01T00:15:00Z",
+            ],
+        )
+        self.assertEqual([point["power_mw"] for point in body["points"]], [0.0, None, 2.0, None])
+        self.assertEqual([point["price_aud_per_mwh"] for point in body["points"]], [100.0, 80.0, None, None])
+        self.assertEqual(body["points"][0]["energy_mwh"], 0.0)
+        for field in ("energy_mwh", "gross_value_aud", "charging_cost_aud", "net_energy_value_aud"):
+            self.assertIsNone(body["points"][1][field])
+            self.assertIsNone(body["points"][3][field])
+        self.assertEqual(body["coverage"]["expected_intervals"], 4)
+        self.assertEqual(body["coverage"]["observed_power_intervals"], 2)
+        self.assertEqual(body["coverage"]["observed_price_intervals"], 2)
+        self.assertEqual(body["coverage"]["missing_power_intervals"], 2)
+        self.assertEqual(body["coverage"]["missing_price_intervals"], 2)
+        self.assertEqual(body["coverage"]["both_missing_intervals"], 1)
+        self.assertEqual(body["coverage"]["power_coverage_percent"], 50.0)
+        self.assertEqual(body["coverage"]["price_coverage_percent"], 50.0)
+        self.assertAlmostEqual(body["summary"]["total_energy_mwh"], 1 / 6)
+        self.assertAlmostEqual(body["summary"]["exported_energy_mwh"], 1 / 6)
+        self.assertEqual(body["summary"]["imported_energy_mwh"], 0.0)
+        self.assertEqual(body["summary"]["gross_value_aud"], 0.0)
+        self.assertEqual(body["summary"]["net_energy_value_aud"], 0.0)
 
     def test_database_series_reuses_estimate_math_and_coverage(self):
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)

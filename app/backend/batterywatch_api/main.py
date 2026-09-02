@@ -32,7 +32,7 @@ from .models import (
 
 router = APIRouter()
 
-MAX_WINDOW_SECONDS = 7 * 24 * 60 * 60
+MAX_WINDOW_SECONDS = 30 * 24 * 60 * 60
 
 
 def _utc(value: datetime, field: str) -> datetime:
@@ -42,27 +42,32 @@ def _utc(value: datetime, field: str) -> datetime:
 
 
 def _point(raw) -> SeriesPoint:
-    energy = raw.power_mw * 5 / 60
-    status = "missing" if raw.price_aud_per_mwh is None else (
-        "negative" if raw.price_aud_per_mwh < 0 else "available"
+    power = raw.power_mw
+    price = raw.price_aud_per_mwh
+    status = "missing" if price is None else (
+        "negative" if price < 0 else "available"
     )
-    if raw.price_aud_per_mwh is None:
-        gross = charging = net = None
-    elif raw.power_mw > 0:
-        gross = energy * raw.price_aud_per_mwh
-        charging = 0.0
-        net = gross
-    elif raw.power_mw < 0:
-        gross = 0.0
-        charging = abs(energy) * raw.price_aud_per_mwh
-        net = -charging
+    if power is None:
+        energy = gross = charging = net = None
     else:
-        gross = charging = net = 0.0
+        energy = power * 5 / 60
+        if price is None:
+            gross = charging = net = None
+        elif power > 0:
+            gross = energy * price
+            charging = 0.0
+            net = gross
+        elif power < 0:
+            gross = 0.0
+            charging = abs(energy) * price
+            net = -charging
+        else:
+            gross = charging = net = 0.0
     return SeriesPoint(
         timestamp=raw.timestamp,
-        power_mw=raw.power_mw,
+        power_mw=power,
         soc_percent=raw.soc_percent,
-        price_aud_per_mwh=raw.price_aud_per_mwh,
+        price_aud_per_mwh=price,
         energy_mwh=energy,
         gross_value_aud=gross,
         charging_cost_aud=charging,
@@ -136,7 +141,7 @@ def _database_bounds(start: str | None, end: str | None) -> tuple[datetime, date
     if (requested_end - requested_start).total_seconds() > MAX_WINDOW_SECONDS:
         raise HTTPException(
             status_code=400,
-            detail="Requested range exceeds the seven-day limit",
+            detail="Requested range exceeds the 30-day limit",
         )
     return requested_start, requested_end
 
@@ -153,12 +158,27 @@ def _series_response(
         for item in raw_points
         if requested_start <= item.timestamp < requested_end
     ]
-    priced = [item for item in points if item.price_aud_per_mwh is not None]
+    observed_power = [item for item in points if item.power_mw is not None]
+    observed_price = [item for item in points if item.price_aud_per_mwh is not None]
     soc_points = [item for item in points if item.soc_percent is not None]
-    exported = sum(item.energy_mwh for item in points if item.energy_mwh > 0)
-    imported = sum(-item.energy_mwh for item in points if item.energy_mwh < 0)
+    exported = sum(
+        item.energy_mwh for item in observed_power if item.energy_mwh is not None and item.energy_mwh > 0
+    )
+    imported = sum(
+        -item.energy_mwh for item in observed_power if item.energy_mwh is not None and item.energy_mwh < 0
+    )
     gross = sum(item.gross_value_aud or 0 for item in points)
     charging = sum(item.charging_cost_aud or 0 for item in points)
+    expected_intervals = len(points)
+    observed_power_intervals = len(observed_power)
+    observed_price_intervals = len(observed_price)
+    missing_power_intervals = expected_intervals - observed_power_intervals
+    missing_price_intervals = expected_intervals - observed_price_intervals
+    both_missing_intervals = sum(
+        1
+        for item in points
+        if item.power_mw is None and item.price_aud_per_mwh is None
+    )
     return SeriesResponse(
         generator=generator,
         requested_start=requested_start,
@@ -167,7 +187,9 @@ def _series_response(
         summary=SeriesSummary(
             interval_count=len(points),
             interval_hours=5 / 60,
-            total_energy_mwh=sum(item.energy_mwh for item in points),
+            total_energy_mwh=sum(
+                item.energy_mwh for item in points if item.energy_mwh is not None
+            ),
             exported_energy_mwh=exported,
             imported_energy_mwh=imported,
             gross_value_aud=gross,
@@ -175,13 +197,31 @@ def _series_response(
             net_energy_value_aud=gross - charging,
         ),
         coverage=Coverage(
-            total_intervals=len(points),
-            price_intervals=len(priced),
-            missing_price_intervals=len(points) - len(priced),
-            price_coverage_percent=(len(priced) / len(points) * 100) if points else 0,
+            expected_intervals=expected_intervals,
+            observed_power_intervals=observed_power_intervals,
+            observed_price_intervals=observed_price_intervals,
+            missing_power_intervals=missing_power_intervals,
+            missing_price_intervals=missing_price_intervals,
+            both_missing_intervals=both_missing_intervals,
+            power_coverage_percent=(
+                observed_power_intervals / expected_intervals * 100
+                if expected_intervals
+                else 0
+            ),
+            total_intervals=expected_intervals,
+            price_intervals=observed_price_intervals,
+            price_coverage_percent=(
+                observed_price_intervals / expected_intervals * 100
+                if expected_intervals
+                else 0
+            ),
             soc_intervals=len(soc_points),
-            missing_soc_intervals=len(points) - len(soc_points),
-            soc_coverage_percent=(len(soc_points) / len(points) * 100) if points else 0,
+            missing_soc_intervals=expected_intervals - len(soc_points),
+            soc_coverage_percent=(
+                len(soc_points) / expected_intervals * 100
+                if expected_intervals
+                else 0
+            ),
         ),
         estimate=EstimateMetadata(
             label="Estimated gross energy value",
@@ -195,9 +235,14 @@ def _series_response(
 @dataclass(frozen=True, slots=True)
 class _DatabasePoint:
     timestamp: datetime
-    power_mw: float
+    power_mw: float | None
     soc_percent: float | None
     price_aud_per_mwh: float | None
+
+
+def _first_aligned_timestamp(value: datetime) -> datetime:
+    floored = value.replace(minute=(value.minute // 5) * 5, second=0, microsecond=0)
+    return floored if floored == value else floored + INTERVAL
 
 
 def _database_points(
@@ -207,6 +252,11 @@ def _database_points(
     requested_start: datetime,
     requested_end: datetime,
 ) -> list[_DatabasePoint]:
+    power_by_timestamp = {
+        row.timestamp: row.power_mw
+        for row in power_rows
+        if requested_start <= row.timestamp < requested_end
+    }
     soc_by_timestamp = {
         row.timestamp: row.soc_percent
         for row in soc_rows
@@ -217,16 +267,19 @@ def _database_points(
         for row in price_rows
         if requested_start <= row.timestamp < requested_end
     }
-    return [
-        _DatabasePoint(
-            timestamp=row.timestamp,
-            power_mw=row.power_mw,
-            soc_percent=soc_by_timestamp.get(row.timestamp),
-            price_aud_per_mwh=price_by_timestamp.get(row.timestamp),
+    timestamp = _first_aligned_timestamp(requested_start)
+    points: list[_DatabasePoint] = []
+    while timestamp < requested_end:
+        points.append(
+            _DatabasePoint(
+                timestamp=timestamp,
+                power_mw=power_by_timestamp.get(timestamp),
+                soc_percent=soc_by_timestamp.get(timestamp),
+                price_aud_per_mwh=price_by_timestamp.get(timestamp),
+            )
         )
-        for row in power_rows
-        if requested_start <= row.timestamp < requested_end
-    ]
+        timestamp += INTERVAL
+    return points
 
 
 def _safe_source_label(rows, fallback: str) -> str:
@@ -343,7 +396,7 @@ def series(
     if requested_end <= requested_start:
         raise HTTPException(status_code=400, detail="end must be after start")
     if (requested_end - requested_start).total_seconds() > MAX_WINDOW_SECONDS:
-        raise HTTPException(status_code=400, detail="Requested range exceeds the seven-day limit")
+        raise HTTPException(status_code=400, detail="Requested range exceeds the 30-day limit")
 
     return _series_response(
         Generator(**generator_metadata()),
