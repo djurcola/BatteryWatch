@@ -1,0 +1,26 @@
+[Unit]
+Description=BatteryWatch NEMWeb Dispatch SCADA collector
+Documentation=file:%h/batterywatch/current/app/deploy/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/batterywatch/current/app/backend
+EnvironmentFile=%h/.config/batterywatch/runtime.env
+ExecStart=%h/batterywatch/current/venv/bin/python -m batterywatch_api.collector_service --assets-path %h/batterywatch/current/app/config/battery_assets.json --interval-seconds 300
+Restart=on-failure
+RestartSec=30s
+TimeoutStopSec=20s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# These capability-dependent protections fail before ExecStart under the
+# unprivileged systemd user manager on the deployment host.
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=default.target
