@@ -107,6 +107,30 @@ class PostgreSQLDispatchScadaIngestorReplayTests(unittest.TestCase):
         self.assertIn("ON CONFLICT DO NOTHING RETURNING 1", connection.executions[0][0])
         self.assertIn("SELECT", connection.executions[1][0])
 
+    def test_alternate_official_source_url_replay_is_a_clean_noop(self):
+        artifact = receipt()
+        stored = (
+            artifact.source_artifact_id,
+            (
+                "https://www.nemweb.com.au/REPORTS/ARCHIVE/Dispatch_SCADA/"
+                "PUBLIC_DISPATCHSCADA_20260101.zip#"
+                + artifact.zip_filename
+            ),
+            artifact.zip_filename,
+            artifact.csv_member_name,
+            artifact.report_timestamp,
+            artifact.zip_sha256,
+            memoryview(artifact.raw_zip),
+        )
+        connection = FakeConnection(fetchone_results=[None, stored])
+
+        result = PostgreSQLDispatchScadaIngestor(connection).ingest(
+            artifact, observations()
+        )
+
+        self.assertEqual(result, DispatchScadaIngestionResult(0, 0, True))
+        self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
+
 
 class PostgreSQLDispatchScadaIngestorConflictTests(unittest.TestCase):
     def test_immutable_conflict_rolls_back_once(self):

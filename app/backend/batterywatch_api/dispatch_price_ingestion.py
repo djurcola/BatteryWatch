@@ -131,8 +131,10 @@ def _receipt_matches(
     if len(stored) != 7:
         return False
     expected = _receipt_parameters(receipt)
-    return expected[:6] == stored[:6] and _normalized_bytes(expected[6]) == _normalized_bytes(
-        stored[6]
+    return (
+        expected[0] == stored[0]
+        and expected[2:6] == stored[2:6]
+        and _normalized_bytes(expected[6]) == _normalized_bytes(stored[6])
     )
 
 

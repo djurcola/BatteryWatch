@@ -139,6 +139,30 @@ class PostgreSQLDispatchPriceIngestorTests(unittest.TestCase):
         self.assertEqual(len(connection.executions), 2)
         self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
 
+    def test_alternate_official_source_url_replay_is_a_clean_noop(self) -> None:
+        artifact = receipt()
+        stored = (
+            artifact.source_artifact_id,
+            (
+                "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/"
+                "PUBLIC_DISPATCHIS_20260830.zip#"
+                + artifact.zip_filename
+            ),
+            artifact.zip_filename,
+            artifact.csv_member_name,
+            artifact.report_timestamp,
+            artifact.zip_sha256,
+            memoryview(artifact.raw_zip),
+        )
+        connection = FakeConnection(fetchone_results=(None, stored))
+
+        result = PostgreSQLDispatchPriceIngestor(connection).ingest(
+            artifact, prices()
+        )
+
+        self.assertEqual(result, DispatchPriceIngestionResult(0, True))
+        self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
+
     def test_conflicting_artifact_identity_rolls_back(self) -> None:
         artifact = receipt()
         stored = (
