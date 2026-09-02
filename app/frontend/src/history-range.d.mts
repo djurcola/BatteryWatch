@@ -1,4 +1,4 @@
-export type RangePreset = "24h" | "7d" | "30d";
+export type RangePreset = "24h" | "7d" | "30d" | "custom";
 export type RangeDirection = "previous" | "next";
 export type HistoryRange = {
   preset: RangePreset;

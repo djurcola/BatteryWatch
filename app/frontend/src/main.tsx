@@ -34,7 +34,21 @@ const RANGE_OPTIONS: RangeOption[] = [
   { value: "24h", label: "24h" },
   { value: "7d", label: "7d" },
   { value: "30d", label: "30d" },
+  { value: "custom", label: "Custom" },
 ];
+
+function toLocalDateTimeInput(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromLocalDateTimeInput(value: string): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString();
+}
 function App() {
   const [generators, setGenerators] = useState<Generator[]>([]);
   const [selected, setSelected] = useState("");
@@ -43,6 +57,8 @@ function App() {
   const [visibleNetValue, setVisibleNetValue] = useState<number | null>(null);
   const [showPrice, setShowPrice] = useState(() => !window.matchMedia("(max-width: 780px)").matches);
   const [error, setError] = useState("");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
   const chartRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -227,13 +243,18 @@ function App() {
     <header><div><p className="eyebrow">STANDALONE BATTERY ANALYTICS</p><h1>BatteryWatch</h1><p className="lede">Five-minute battery power, regional price overlays, and transparent energy estimates.</p></div><label>Generator<select value={selected} onChange={(event) => setSelected(event.target.value)}>{generators.map((g) => <option key={g.duid} value={g.duid}>{g.site_name} · {g.duid} · {g.region}</option>)}</select></label></header>
     <nav className="range-controls" aria-label="History range controls">
       <div className="range-presets" role="group" aria-label="Select history range">
-        {RANGE_OPTIONS.map((option) => <button key={option.value} type="button" aria-pressed={range.preset === option.value} onClick={() => setRange(selectPreset(option.value))}>{option.label}</button>)}
+        {RANGE_OPTIONS.map((option) => <button key={option.value} type="button" aria-pressed={range.preset === option.value} onClick={() => { if (option.value === "custom") { setCustomStart(toLocalDateTimeInput(range.start)); setCustomEnd(toLocalDateTimeInput(range.end)); } setRange(selectPreset(option.value)); }}>{option.label}</button>)}
       </div>
-      <div className="range-navigation" role="group" aria-label="Navigate selected range">
+      {range.preset !== "custom" && <div className="range-navigation" role="group" aria-label="Navigate selected range">
         <button type="button" aria-label="Previous selected range" onClick={() => setRange((current) => shiftRange(current, "previous"))}>Previous</button>
         <button type="button" aria-label="Next selected range" onClick={() => setRange((current) => shiftRange(current, "next"))}>Next</button>
         <button type="button" aria-label="Return to latest selected range" onClick={() => setRange((current) => latestRange(current.preset))}>Latest</button>
-      </div>
+      </div>}
+      {range.preset === "custom" && <div className="range-custom" role="group" aria-label="Custom date range">
+        <label>Start<input type="datetime-local" value={customStart} onChange={(e) => setCustomStart(e.target.value)} /></label>
+        <label>End<input type="datetime-local" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} /></label>
+        <button type="button" onClick={() => { const s = fromLocalDateTimeInput(customStart); const en = fromLocalDateTimeInput(customEnd); if (s && en && new Date(s) < new Date(en)) { setRange({ preset: "custom", start: s, end: en }); } }}>Apply</button>
+      </div>}
     </nav>
     <p className="selected-window" aria-live="polite">Selected {rangeLabel(range.preset)} window: {formatTimestamp(range.start)} – {formatTimestamp(range.end)}</p>
     {error && <div className="error" role="alert">{error}</div>}

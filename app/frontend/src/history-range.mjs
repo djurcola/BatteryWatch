@@ -5,23 +5,26 @@ export const RANGE_DURATIONS_MS = Object.freeze({
   "24h": DAY_MS,
   "7d": 7 * DAY_MS,
   "30d": 30 * DAY_MS,
+  "custom": null,
 });
 
 const RANGE_LABELS = Object.freeze({
   "24h": "24 hours",
   "7d": "7 days",
   "30d": "30 days",
+  "custom": "custom range",
 });
 
 export const RANGE_PRESETS = Object.freeze([
   { value: "24h", label: RANGE_LABELS["24h"], durationMs: RANGE_DURATIONS_MS["24h"] },
   { value: "7d", label: RANGE_LABELS["7d"], durationMs: RANGE_DURATIONS_MS["7d"] },
   { value: "30d", label: RANGE_LABELS["30d"], durationMs: RANGE_DURATIONS_MS["30d"] },
+  { value: "custom", label: RANGE_LABELS["custom"], durationMs: null },
 ]);
 
 function durationMs(preset) {
   const duration = RANGE_DURATIONS_MS[preset];
-  if (duration == null) throw new RangeError(`Unknown range preset: ${preset}`);
+  if (duration == null && preset !== "custom") throw new RangeError(`Unknown range preset: ${preset}`);
   return duration;
 }
 

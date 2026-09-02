@@ -5,6 +5,10 @@ main { width: 100%; max-width: none; min-height: 100vh; display: flex; flex-dire
 header { display: flex; justify-content: space-between; gap: 28px; align-items: end; border-bottom: 1px solid #1e334d; padding-bottom: 28px; }
 .range-controls { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
 .range-presets, .range-navigation { display: flex; gap: 6px; }
+.range-custom { display: flex; gap: 12px; align-items: end; }
+.range-custom label { min-width: auto; display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: #94a3b8; }
+.range-custom input[type="datetime-local"] { background: #0d1d31; border: 1px solid #31506e; color: #f8fafc; padding: 8px 10px; border-radius: 7px; font-size: 12px; font-family: inherit; }
+.range-custom input[type="datetime-local"]:focus { outline: 2px solid rgba(45, 212, 191, 0.35); outline-offset: 1px; border-color: #2dd4bf; }
 .range-controls button { border: 1px solid #31506e; border-radius: 7px; background: #0d1d31; color: #cbd5e1; cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; padding: 9px 13px; }
 .range-controls button:hover, .range-controls button:focus-visible { border-color: #2dd4bf; color: #ffffff; outline: 2px solid rgba(45, 212, 191, 0.35); outline-offset: 1px; }
 .range-controls button[aria-pressed="true"] { background: #113d3e; border-color: #2dd4bf; color: #ffffff; }
