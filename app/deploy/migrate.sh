@@ -37,6 +37,8 @@ psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/007_backfill_runtime_details.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/008_authoritative_soc.sql"
+psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
+  --file="$app_dir/migrations/009_allow_archive_urls.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 --tuples-only --no-align \
   <<'SQL'
 SELECT count(*) = 13

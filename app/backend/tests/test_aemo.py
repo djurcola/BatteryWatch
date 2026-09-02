@@ -105,6 +105,23 @@ class AemoDispatchPriceParserTests(unittest.TestCase):
         self.assertEqual((records[0].intervention, records[0].apc_flag), (1, 1))
         self.assertFalse(records[0].market_suspended)
 
+    def test_mms_price_parser_accepts_documented_non_firm_status(self):
+        payload = _mms_payload(
+            _mms_row("NSW1", "10", price_status="NOT FIRM"),
+            _mms_row("QLD1", "11"),
+            _mms_row("SA1", "12"),
+            _mms_row("TAS1", "13"),
+            _mms_row("VIC1", "14"),
+        )
+
+        records = parse_dispatch_price_mms_csv(
+            payload,
+            source_id=MMS_SOURCE_ID,
+            ingestion_version=7,
+        )
+
+        self.assertIn("aemo_price_status=NOT FIRM", records[0].quality_flags)
+
     def test_mms_price_parser_rejects_incomplete_or_unsafe_reports(self):
         rows = [
             _mms_row("NSW1", "10"),

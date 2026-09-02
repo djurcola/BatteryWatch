@@ -49,7 +49,7 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         self.assertIn("SELECT count(*) = 13", migrate_script)
         for table in ("historical_source_artifacts", "historical_backfill_item_artifacts"):
             self.assertIn(f"'{table}'", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 9)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
 
         upper = migration.upper()
         for forbidden in ("DROP ", "ALTER ", "TRUNCATE "):
@@ -88,7 +88,7 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         ):
             self.assertIn(f"'{event_type}'", migration)
         self.assertIn("006_artifact_recorded_event.sql", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 9)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
         self.assertNotIn("TRUNCATE ", upper)
         self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
 
@@ -115,7 +115,7 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         self.assertIn("historical_backfill_events_details_check", migration)
         self.assertIn("jsonb_typeof(details) = 'object'", migration)
         self.assertIn("007_backfill_runtime_details.sql", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 9)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
         self.assertNotIn("TRUNCATE ", upper)
         self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
 
@@ -216,7 +216,34 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         )
         self.assertIn("SELECT count(*) = 13", migrate_script)
         self.assertIn("'raw_nextday_soc_observations'", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 9)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
+            self.assertNotIn(forbidden, upper)
+
+    def test_allows_exact_archive_interval_receipt_urls_after_soc_migration(self) -> None:
+        app_root = Path(__file__).resolve().parents[2]
+        migration_path = app_root / "migrations" / "009_allow_archive_urls.sql"
+        self.assertTrue(migration_path.exists(), "009 archive-URL migration is missing")
+
+        migration = migration_path.read_text(encoding="utf-8")
+        migrate_script = (app_root / "deploy" / "migrate.sh").read_text(
+            encoding="utf-8"
+        )
+        upper = migration.upper()
+
+        self.assertIn("BEGIN;", upper)
+        self.assertIn("COMMIT;", upper)
+        self.assertIn("REPORTS/CURRENT/Dispatch_SCADA/", migration)
+        self.assertIn("REPORTS/ARCHIVE/Dispatch_SCADA/", migration)
+        self.assertIn("REPORTS/CURRENT/DispatchIS_Reports/", migration)
+        self.assertIn("REPORTS/ARCHIVE/DispatchIS_Reports/", migration)
+        self.assertEqual(migration.count("|| '.zip#' || zip_filename"), 2)
+        self.assertIn("009_allow_archive_urls.sql", migrate_script)
+        self.assertLess(
+            migrate_script.index("008_authoritative_soc.sql"),
+            migrate_script.index("009_allow_archive_urls.sql"),
+        )
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
         for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
             self.assertNotIn(forbidden, upper)
 

@@ -38,3 +38,9 @@ test("range-specific labels and local window display replace a fixed preceding d
   assert.match(source, /range\.end/);
   assert.match(source, /selected range/i);
 });
+
+test("entering custom mode preserves valid bounds until explicit dates are applied", () => {
+  assert.match(source, /customRange\(range\.start, range\.end\)/);
+  assert.match(source, /customRange\(customStart, customEnd\)/);
+  assert.doesNotMatch(source, /selectPreset\(option\.value\)/);
+});

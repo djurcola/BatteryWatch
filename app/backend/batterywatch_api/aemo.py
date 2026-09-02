@@ -6,7 +6,6 @@ import csv
 from datetime import datetime, timedelta, timezone, tzinfo
 from io import StringIO
 from math import isfinite
-import re
 
 from .storage import RegionalPrice5m
 
@@ -170,7 +169,7 @@ _MMS_PRICE_HEADER = (
     "CUMUL_PRE_AP_LOWER1_PRICE", "OCD_STATUS", "MII_STATUS",
 )
 _MMS_REGIONS = frozenset(("NSW1", "QLD1", "SA1", "TAS1", "VIC1"))
-_MMS_STATUS_RE = re.compile(r"[A-Za-z0-9_.-]{1,32}")
+_MMS_PRICE_STATUSES = frozenset(("FIRM", "NOT FIRM"))
 
 
 def _mms_timestamp(value: str, row_number: int, *, aligned: bool) -> datetime:
@@ -307,7 +306,7 @@ def parse_dispatch_price_mms_csv(
             row_number,
         )
         status = row[header_positions["PRICE_STATUS"]]
-        if not _MMS_STATUS_RE.fullmatch(status) or not status.isascii():
+        if status not in _MMS_PRICE_STATUSES:
             raise AemoParseError(f"row {row_number}: invalid PRICE_STATUS")
         price = _mms_rrp(row[header_positions["RRP"]], row_number)
         observed_at = source_timestamp or _mms_timestamp(

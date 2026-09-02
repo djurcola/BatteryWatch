@@ -7,13 +7,14 @@ export type HistoryRange = {
 };
 export type RangeNow = Date | string | number;
 
-export const RANGE_DURATIONS_MS: Readonly<Record<RangePreset, number>>;
+export const RANGE_DURATIONS_MS: Readonly<Record<RangePreset, number | null>>;
 export const RANGE_PRESETS: readonly {
   value: RangePreset;
   label: string;
-  durationMs: number;
+  durationMs: number | null;
 }[];
 export function rangeLabel(preset: RangePreset): string;
+export function customRange(start: RangeNow, end: RangeNow): HistoryRange;
 export function latestRange(preset: RangePreset, now?: RangeNow): HistoryRange;
 export function selectPreset(preset: RangePreset, now?: RangeNow): HistoryRange;
 export function shiftRange(

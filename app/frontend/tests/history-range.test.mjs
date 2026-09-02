@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { latestRange, selectPreset, shiftRange } from "../src/history-range.mjs";
+import { customRange, latestRange, selectPreset, shiftRange } from "../src/history-range.mjs";
 
 const now = "2026-09-02T12:00:00Z";
 
@@ -40,4 +40,20 @@ test("next caps its end at now and preset selection returns the latest window", 
   const current = latestRange("24h", now);
   assert.deepEqual(shiftRange(current, "next", now), current);
   assert.deepEqual(selectPreset("30d", now), latestRange("30d", now));
+});
+
+test("custom ranges require explicit ordered bounds and fixed helpers reject custom", () => {
+  assert.deepEqual(
+    customRange("2026-08-03T12:00:00Z", "2026-09-02T12:00:00Z"),
+    {
+      preset: "custom",
+      start: "2026-08-03T12:00:00.000Z",
+      end: "2026-09-02T12:00:00.000Z",
+    },
+  );
+  assert.throws(
+    () => customRange("2026-09-02T12:00:00Z", "2026-08-03T12:00:00Z"),
+    /precede/,
+  );
+  assert.throws(() => latestRange("custom", now), /explicit bounds/);
 });

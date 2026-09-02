@@ -24,7 +24,10 @@ export const RANGE_PRESETS = Object.freeze([
 
 function durationMs(preset) {
   const duration = RANGE_DURATIONS_MS[preset];
-  if (duration == null && preset !== "custom") throw new RangeError(`Unknown range preset: ${preset}`);
+  if (duration == null) {
+    if (preset === "custom") throw new RangeError("Custom ranges require explicit bounds");
+    throw new RangeError(`Unknown range preset: ${preset}`);
+  }
   return duration;
 }
 
@@ -43,8 +46,22 @@ function createRange(preset, endMilliseconds) {
 }
 
 export function rangeLabel(preset) {
-  durationMs(preset);
-  return RANGE_LABELS[preset];
+  const label = RANGE_LABELS[preset];
+  if (label == null) throw new RangeError(`Unknown range preset: ${preset}`);
+  return label;
+}
+
+export function customRange(start, end) {
+  const startMilliseconds = milliseconds(start);
+  const endMilliseconds = milliseconds(end);
+  if (startMilliseconds >= endMilliseconds) {
+    throw new RangeError("Custom range start must precede end");
+  }
+  return {
+    preset: "custom",
+    start: new Date(startMilliseconds).toISOString(),
+    end: new Date(endMilliseconds).toISOString(),
+  };
 }
 
 export function latestRange(preset, now = new Date()) {
