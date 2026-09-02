@@ -44,3 +44,39 @@ test("entering custom mode preserves valid bounds until explicit dates are appli
   assert.match(source, /customRange\(customStart, customEnd\)/);
   assert.doesNotMatch(source, /selectPreset\(option\.value\)/);
 });
+
+test("fixed presets load an older gutter and plan server-backed adjacent pages", () => {
+  assert.match(source, /history-buffer\.mjs/);
+  assert.match(source, /initialGutterChunk/);
+  assert.match(source, /planAdjacentChunk/);
+  assert.match(source, /chunk\.start/);
+  assert.match(source, /chunk\.end/);
+});
+
+test("adjacent pages are cancellable, bounded, merged, and retryable", () => {
+  assert.match(source, /adjacentRequests/);
+  assert.match(source, /generation/);
+  assert.match(source, /mergePoints/);
+  assert.match(source, /retainBuffer/);
+  assert.match(source, /fetchSeries\([\s\S]*signal/);
+  assert.match(source, /Unable to load adjacent history/);
+});
+
+test("paging updates data without clearing the current chart and reapplies absolute bounds", () => {
+  assert.match(source, /chart\.setOption/);
+  assert.match(source, /startValue/);
+  assert.match(source, /endValue/);
+  assert.match(source, /visibleBounds/);
+  assert.match(source, /setSeries\(\(current\) => current \? \{\.\.\.current, points:/);
+});
+
+test("custom ranges stay bounded while fixed paging is capped at request-time now", () => {
+  assert.match(source, /range\.preset !== "custom"/);
+  assert.match(source, /Math\.min\([\s\S]*Date\.now/);
+});
+
+test("adjacent-load errors expose an accessible retry action through the current visible bounds", () => {
+  assert.match(source, /error === ADJACENT_LOAD_ERROR/);
+  assert.match(source, /aria-label=["']Retry adjacent history["']/);
+  assert.match(source, /requestAdjacentRef\.current\(visibleBoundsRef\.current/);
+});
