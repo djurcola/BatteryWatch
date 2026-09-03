@@ -33,6 +33,7 @@ from .nextday_monthly_extraction import (
     read_nextday_daily_artifact,
     validate_nextday_monthly_archive,
 )
+from .nextday_fcas_ingestion import PostgreSQLNextDayFcasIngestor
 from .nextday_soc import parse_nextday_unit_solution_soc
 from .nextday_soc_ingestion import PostgreSQLNextDaySocIngestor
 
@@ -54,6 +55,36 @@ class HistoricalNextDayBackfillResult:
     effective_replayed: int
     source_null_count: int
     percentage_count: int
+    fcas_raw_inserted: int = 0
+    fcas_raw_replayed: int = 0
+    fcas_effective_candidates: int = 0
+    fcas_effective_applied: int = 0
+    fcas_effective_replayed: int = 0
+    fcas_reported_service_count: int = 0
+
+    @property
+    def fcas_inserted_count(self) -> int:
+        return self.fcas_raw_inserted
+
+    @property
+    def fcas_replayed_count(self) -> int:
+        return self.fcas_raw_replayed
+
+    @property
+    def fcas_candidate_count(self) -> int:
+        return self.fcas_effective_candidates
+
+    @property
+    def fcas_applied_count(self) -> int:
+        return self.fcas_effective_applied
+
+    @property
+    def fcas_effective_replayed_count(self) -> int:
+        return self.fcas_effective_replayed
+
+    @property
+    def fcas_reported_count(self) -> int:
+        return self.fcas_reported_service_count
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +199,7 @@ def run_nextday_soc_backfill_claim(
     ] = read_nextday_daily_artifact,
     parse_csv: Callable[..., tuple[Any, ...]] = parse_nextday_unit_solution_soc,
     ingestor_factory: Callable[[Any], Any] = PostgreSQLNextDaySocIngestor,
+    fcas_ingestor_factory: Callable[[Any], Any] = PostgreSQLNextDayFcasIngestor,
 ) -> Any:
     """Validate all selected daily reports before any SOC observation write."""
 
@@ -252,6 +284,13 @@ def run_nextday_soc_backfill_claim(
         effective_replayed = 0
         source_null_count = 0
         percentage_count = 0
+        fcas_raw_inserted = 0
+        fcas_raw_replayed = 0
+        fcas_effective_candidates = 0
+        fcas_effective_applied = 0
+        fcas_effective_replayed = 0
+        fcas_reported_service_count = 0
+        fcas_projection_seen = False
         for validated_daily in validated:
             daily = read_daily(
                 manifest, resource.body, validated_daily.member
@@ -288,6 +327,25 @@ def run_nextday_soc_backfill_claim(
             source_null_count += ingestion.source_null_count
             percentage_count += ingestion.percentage_count
 
+            # Older injected parsers used by callers may still return envelope
+            # objects without the additive FCAS field.  The production parser
+            # always supplies it; retaining this narrow compatibility path does
+            # not let a real FCAS-bearing observation skip its projection.
+            has_fcas = [hasattr(item, "fcas") for item in selected]
+            if any(has_fcas) and not all(has_fcas):
+                raise ValueError("mixed Next Day SOC/FCAS observation shape")
+            if not has_fcas or not has_fcas[0]:
+                continue
+            with _connection_scope(connect, database_url) as connection:
+                fcas_ingestion = fcas_ingestor_factory(connection).ingest(selected)
+            fcas_projection_seen = True
+            fcas_raw_inserted += fcas_ingestion.raw_inserted
+            fcas_raw_replayed += fcas_ingestion.raw_replayed
+            fcas_effective_candidates += fcas_ingestion.effective_candidates
+            fcas_effective_applied += fcas_ingestion.effective_applied
+            fcas_effective_replayed += fcas_ingestion.effective_replayed
+            fcas_reported_service_count += fcas_ingestion.reported_service_count
+
         fully_replayed = (
             outer_result.replayed
             and daily_artifacts_replayed == len(validated)
@@ -295,6 +353,15 @@ def run_nextday_soc_backfill_claim(
             and raw_replayed == source_rows
             and effective_applied == 0
             and effective_replayed == effective_candidates
+            and (
+                not fcas_projection_seen
+                or (
+                    fcas_raw_inserted == 0
+                    and fcas_raw_replayed == source_rows
+                    and fcas_effective_applied == 0
+                    and fcas_effective_replayed == fcas_effective_candidates
+                )
+            )
         )
         completion = BackfillItemCompletion(fully_replayed, source_rows)
         with _connection_scope(connect, database_url) as connection:
@@ -312,6 +379,12 @@ def run_nextday_soc_backfill_claim(
             effective_replayed,
             source_null_count,
             percentage_count,
+            fcas_raw_inserted,
+            fcas_raw_replayed,
+            fcas_effective_candidates,
+            fcas_effective_applied,
+            fcas_effective_replayed,
+            fcas_reported_service_count,
         )
     except Exception as exc:
         _fail_claim(

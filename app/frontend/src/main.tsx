@@ -26,6 +26,11 @@ import {
 type Generator = { duid: string; site_name: string; region: string };
 type Point = { timestamp: string; power_mw: number | null; price_aud_per_mwh: number | null; net_energy_value_aud: number | null };
 type Series = { generator: Generator; points: Point[]; summary: { exported_energy_mwh: number; imported_energy_mwh: number; net_energy_value_aud: number }; coverage: { power_coverage_percent: number; price_coverage_percent: number; soc_coverage_percent: number }; estimate: { label: string; disclaimer: string } };
+type FcasServiceName = "raise_1s" | "lower_1s" | "raise_6s" | "lower_6s" | "raise_60s" | "lower_60s" | "raise_5m" | "lower_5m" | "raise_reg" | "lower_reg";
+type FcasServicePoint = { target_mw: number | null; enablement_status: number | null; actual_availability_mw: number | null; enabled: boolean; trapped: boolean; stranded: boolean; cleared: boolean; participating: boolean; response_verified: false };
+type FcasPoint = { timestamp: string; services: Record<FcasServiceName, FcasServicePoint> };
+type FcasSummary = { reported_intervals: number; enabled_intervals: number; cleared_intervals: number; participating_intervals: number; trapped_intervals: number; stranded_intervals: number; max_target_mw: number | null; max_actual_availability_mw: number | null };
+type Fcas = { selected_services: FcasServiceName[]; points: FcasPoint[]; coverage: { expected_intervals: number; observed_intervals: number; missing_intervals: number; coverage_percent: number }; latest_finalized: { interval_start: string; report_timestamp: string; downloaded_at: string; source_artifact_sha256: string; dispatch_interval: string; intervention: number; run_number: number } | null; publication_state: "available" | "partial" | "not_yet_public" | "no_data"; service_summaries: Partial<Record<FcasServiceName, FcasSummary>> };
 type RangeOption = { value: RangePreset; label: string };
 type TooltipEntry = { name: string; axisValue?: string | number; seriesName?: string; value: unknown; marker?: string };
 type DataZoomEvent = { start?: number; end?: number; startValue?: unknown; endValue?: unknown; batch?: DataZoomEvent[] };
@@ -43,6 +48,16 @@ function formatTimestamp(value: unknown) {
 }
 function isAbortError(error: unknown) {
   return (error instanceof DOMException && error.name === "AbortError") || (error instanceof Error && error.name === "AbortError");
+}
+function fcasServiceLabel(service: FcasServiceName) {
+  const labels: Record<FcasServiceName, string> = { raise_1s: "Raise 1-second", lower_1s: "Lower 1-second", raise_6s: "Raise 6-second", lower_6s: "Lower 6-second", raise_60s: "Raise 60-second", lower_60s: "Lower 60-second", raise_5m: "Raise 5-minute", lower_5m: "Lower 5-minute", raise_reg: "Raise regulation", lower_reg: "Lower regulation" };
+  return labels[service];
+}
+function fcasPublicationLabel(state: Fcas["publication_state"]) {
+  if (state === "not_yet_public") return "not yet public";
+  if (state === "no_data") return "no data";
+  if (state === "partial") return "partial coverage";
+  return "available";
 }
 function milliseconds(value: string) {
   const result = Date.parse(value);
@@ -135,6 +150,8 @@ function App() {
   const [generators, setGenerators] = useState<Generator[]>([]);
   const [selected, setSelected] = useState("");
   const [series, setSeries] = useState<Series | null>(null);
+  const [fcas, setFcas] = useState<Fcas | null>(null);
+  const [fcasError, setFcasError] = useState("");
   const [range, setRange] = useState<HistoryRange>(() => latestRange("24h"));
   const [visibleNetValue, setVisibleNetValue] = useState<number | null>(null);
   const [showPrice, setShowPrice] = useState(() => !window.matchMedia("(max-width: 780px)").matches);
@@ -142,6 +159,7 @@ function App() {
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const chartRef = useRef<HTMLDivElement>(null);
+  const fcasChartRef = useRef<HTMLDivElement>(null);
   const chartInstanceRef = useRef<ChartInstance | null>(null);
   const bufferRef = useRef<BufferState | null>(null);
   const visibleBoundsRef = useRef<HistoryBufferBounds | null>(null);
@@ -255,6 +273,22 @@ function App() {
       for (const request of adjacentRequests.current.values()) request.controller.abort();
       adjacentRequests.current.clear();
     };
+  }, [selected, range]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const controller = new AbortController();
+    let obsolete = false;
+    setFcas(null);
+    setFcasError("");
+    const query = new URLSearchParams({ generator: selected, start: range.start, end: range.end });
+    fetch(`/api/fcas?${query.toString()}`, { signal: controller.signal })
+      .then(async (r) => { if (!r.ok) throw new Error(); return r.json(); })
+      .then((body) => { if (!obsolete) setFcas(body); })
+      .catch((reason: unknown) => {
+        if (!obsolete && !isAbortError(reason)) setFcasError(`Unable to load FCAS data for the selected ${rangeLabel(range.preset)} range.`);
+      });
+    return () => { obsolete = true; controller.abort(); };
   }, [selected, range]);
 
   requestAdjacentRef.current = (visible: HistoryBufferBounds) => {
@@ -491,6 +525,40 @@ function App() {
     return () => mobileQuery.removeEventListener("change", applyResponsiveLayout);
   }, [showPrice, series]);
 
+  useEffect(() => {
+    if (!fcasChartRef.current || !fcas || fcas.points.length === 0) return;
+    const chart = echarts.init(fcasChartRef.current);
+    const mobileQuery = window.matchMedia("(max-width: 780px)");
+    const labels = fcas.selected_services.map(fcasServiceLabel);
+    const applyResponsiveLayout = () => {
+      chart.setOption({ grid: { left: mobileQuery.matches ? 52 : 64, right: 18, containLabel: true } });
+    };
+    chart.setOption({
+      animation: false,
+      aria: { enabled: true },
+      tooltip: { trigger: "axis" },
+      legend: { top: 8, textStyle: { color: "#ffffff" }, data: labels },
+      grid: { left: 64, right: 18, top: 48, bottom: 58 },
+      xAxis: { type: "time", axisLabel: { color: "#ffffff", fontSize: 11 } },
+      yAxis: { type: "value", name: "Target MW", axisLabel: { color: "#ffffff", fontSize: 11 }, nameTextStyle: { color: "#ffffff" }, splitLine: { lineStyle: { color: "rgba(255, 255, 255, 0.1)" } } },
+      series: fcas.selected_services.map((service) => ({
+        name: fcasServiceLabel(service),
+        type: "line",
+        showSymbol: range.preset === "24h",
+        symbol: "circle",
+        symbolSize: 6,
+        connectNulls: false,
+        data: fcas.points.map((point) => [point.timestamp, point.services[service]?.target_mw ?? null]),
+      })),
+    });
+    applyResponsiveLayout();
+    const resize = () => { applyResponsiveLayout(); chart.resize(); };
+    const mediaChange = () => resize();
+    window.addEventListener("resize", resize);
+    mobileQuery.addEventListener("change", mediaChange);
+    return () => { window.removeEventListener("resize", resize); mobileQuery.removeEventListener("change", mediaChange); chart.dispose(); };
+  }, [fcas, range.preset]);
+
   return <main>
     <header><div><p className="eyebrow">STANDALONE BATTERY ANALYTICS</p><h1>BatteryWatch</h1><p className="lede">Five-minute battery power, regional price overlays, and transparent energy estimates.</p></div><label>Generator<select value={selected} onChange={(event) => setSelected(event.target.value)}>{generators.map((g) => <option key={g.duid} value={g.duid}>{g.site_name} · {g.duid} · {g.region}</option>)}</select></label></header>
     <nav className="range-controls" aria-label="History range controls">
@@ -527,6 +595,19 @@ function App() {
       <section className="panel"><div className="panel-heading"><div><h2>{series.generator.site_name}</h2><p>{series.points.length} five-minute intervals loaded around the selected {rangeLabel(range.preset)} window · zoom and pan enabled</p></div><div className="panel-actions"><label className="chart-toggle"><input type="checkbox" checked={showPrice} onChange={(event) => setShowPrice(event.target.checked)} /> Show price data</label><span className="badge">{series.estimate.label}</span></div></div><div ref={chartRef} className="chart" /></section>
       <aside className="notice"><strong>Estimated value — not actual profit.</strong> {series.estimate.disclaimer}</aside>
     </>}
+    {selected && <section className="panel fcas-panel" aria-labelledby="fcas-heading">
+      <div className="panel-heading"><div><h2 id="fcas-heading">FCAS dispatch targets</h2><p>Selected {rangeLabel(range.preset)} window · grouped five-minute finalized service observations</p></div>{fcas && <span className={`badge fcas-state fcas-state-${fcas.publication_state}`} role="status" aria-live="polite">{fcasPublicationLabel(fcas.publication_state)}</span>}</div>
+      {fcasError && <div className="error fcas-error" role="alert">{fcasError}</div>}
+      {!fcas && !fcasError && <p className="loading" role="status" aria-live="polite">Loading FCAS dispatch targets for the selected range…</p>}
+      {fcas && <>
+        <p className="fcas-disclaimer"><strong>AEMO finalized dispatch target — not verified physical response</strong></p>
+        <p className="fcas-coverage" role="status" aria-live="polite">{fcas.coverage.observed_intervals} of {fcas.coverage.expected_intervals} five-minute intervals reported · {fcas.coverage.coverage_percent.toFixed(0)}% coverage{fcas.latest_finalized ? ` · latest finalized ${formatTimestamp(fcas.latest_finalized.interval_start)}` : ""}</p>
+        {fcas.points.length > 0 && <div ref={fcasChartRef} className="fcas-chart" role="img" aria-label="FCAS target MW time series" />}
+        <div className="fcas-summary-grid">
+          {fcas.selected_services.map((service) => { const summary = fcas.service_summaries[service]; return <article key={service}><h3>{fcasServiceLabel(service)}</h3>{summary ? <dl><div><dt>Reported</dt><dd>{summary.reported_intervals}</dd></div><div><dt>Enabled</dt><dd>{summary.enabled_intervals}</dd></div><div><dt>Cleared</dt><dd>{summary.cleared_intervals}</dd></div><div><dt>Participating</dt><dd>{summary.participating_intervals}</dd></div><div><dt>Trapped / stranded</dt><dd>{summary.trapped_intervals} / {summary.stranded_intervals}</dd></div><div><dt>Max target</dt><dd>{summary.max_target_mw == null ? "—" : `${summary.max_target_mw.toFixed(3)} MW`}</dd></div><div><dt>Max availability</dt><dd>{summary.max_actual_availability_mw == null ? "—" : `${summary.max_actual_availability_mw.toFixed(3)} MW`}</dd></div></dl> : <p>Summary unavailable.</p>}</article>; })}
+        </div>
+      </>}
+    </section>}
   </main>;
 }
 

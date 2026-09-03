@@ -1,11 +1,20 @@
 """Tests for authoritative Next Day UnitSolution SOC parsing."""
 
+import csv
 from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 from typing import Any
 import unittest
 
-from batterywatch_api.nextday_soc import NextDaySocParseError, parse_nextday_unit_solution_soc
+from batterywatch_api import nextday_soc as nextday_soc_module
+from batterywatch_api.nextday_soc import (
+    FCAS_SERVICES,
+    NextDayFcasObservation,
+    NextDaySocObservation,
+    NextDaySocParseError,
+    parse_nextday_unit_solution_soc,
+)
 
 UTC = timezone.utc
 FIXTURE = Path(__file__).parent / "fixtures" / "historical" / "nextday-unit-solution-soc-20260829-reduced.csv"
@@ -32,6 +41,30 @@ class NextDaySocParserTests(unittest.TestCase):
             correction_version=2,
         )
 
+    def mutate_row(self, payload: str, **changes: str) -> str:
+        rows = list(csv.reader(StringIO(payload)))
+        header = rows[1]
+        duid_index = header.index("DUID")
+        row = next(
+            row for row in rows[2:]
+            if len(row) > duid_index and row[duid_index] == "ADPBA1"
+        )
+        for column, value in changes.items():
+            row[header.index(column)] = value
+        output = StringIO(newline="")
+        csv.writer(output, lineterminator="\n").writerows(rows)
+        return output.getvalue()
+
+    def without_columns(self, payload: str, *columns: str) -> str:
+        rows = list(csv.reader(StringIO(payload)))
+        header = rows[1]
+        indexes = {header.index(column) for column in columns}
+        for row in rows[:2] + [row for row in rows[2:] if row and row[0] == "D"]:
+            row[:] = [value for index, value in enumerate(row) if index not in indexes]
+        output = StringIO(newline="")
+        csv.writer(output, lineterminator="\n").writerows(rows)
+        return output.getvalue()
+
     def test_parses_real_derived_mwh_null_and_publication_latency(self) -> None:
         observations = self.parse()
 
@@ -57,6 +90,184 @@ class NextDaySocParserTests(unittest.TestCase):
             sorted((item.duid, item.interval_start) for item in observations),
         )
 
+    def test_v6_observations_include_all_canonical_fcas_services(self) -> None:
+        observations = self.parse()
+
+        self.assertEqual(
+            tuple(observations[0].fcas.services),
+            (
+                "raise_1s",
+                "lower_1s",
+                "raise_6s",
+                "lower_6s",
+                "raise_60s",
+                "lower_60s",
+                "raise_5m",
+                "lower_5m",
+                "raise_reg",
+                "lower_reg",
+            ),
+        )
+
+    def test_retains_positive_and_enabled_zero_fcas_values(self) -> None:
+        payload = self.mutate_row(self.payload, RAISE1SECFLAGS="1")
+        observations = self.parse(payload)
+        first = observations[0]
+        positive = first.fcas.raise_6s
+        self.assertEqual(positive.target_mw, 3.0)
+        self.assertEqual(positive.enablement_status, 1)
+        self.assertEqual(positive.actual_availability_mw, 3.0)
+        self.assertTrue(positive.enabled)
+        self.assertTrue(positive.cleared)
+        self.assertTrue(positive.participating)
+
+        enabled_zero = first.fcas.raise_1s
+        self.assertEqual(enabled_zero.target_mw, 0.0)
+        self.assertEqual(enabled_zero.enablement_status, 1)
+        self.assertEqual(enabled_zero.actual_availability_mw, 0.0)
+        self.assertTrue(enabled_zero.enabled)
+        self.assertFalse(enabled_zero.cleared)
+        self.assertFalse(enabled_zero.participating)
+        self.assertEqual(first.fcas.reported_service_count, 10)
+
+    def test_fcas_model_keeps_one_canonical_surface(self) -> None:
+        service = self.parse()[0].fcas.raise_6s
+
+        self.assertTrue(service.reported)
+        self.assertIsNone(service.response_evidence)
+        for redundant in (
+            "is_enabled",
+            "is_trapped",
+            "is_stranded",
+            "is_cleared",
+            "is_participating",
+            "response_verified",
+            "response_verification",
+        ):
+            with self.subTest(redundant=redundant):
+                self.assertFalse(hasattr(service, redundant))
+        for alias in (
+            "NextDayFcasService",
+            "FcasServiceObservation",
+            "FcasObservation",
+        ):
+            with self.subTest(alias=alias):
+                self.assertFalse(hasattr(nextday_soc_module, alias))
+
+    def test_derives_trapped_stranded_epsilon_and_unknown_response(self) -> None:
+        payload = self.mutate_row(
+            self.payload,
+            RAISE6SECFLAGS="3",
+            LOWER6SECFLAGS="4",
+            RAISE60SEC="0.000001",
+        )
+        first = self.parse(payload)[0]
+        trapped = first.fcas.raise_6s
+        self.assertTrue(trapped.enabled)
+        self.assertTrue(trapped.trapped)
+        self.assertTrue(trapped.participating)
+        stranded = first.fcas.lower_6s
+        self.assertTrue(stranded.stranded)
+        self.assertFalse(stranded.enabled)
+        self.assertTrue(stranded.cleared)
+        self.assertFalse(stranded.participating)
+        epsilon = first.fcas.raise_60s
+        self.assertFalse(epsilon.cleared)
+        self.assertFalse(epsilon.participating)
+        self.assertIsNone(epsilon.response_evidence)
+
+    def test_missing_fcas_columns_are_null_without_shifting_other_services(self) -> None:
+        payload = self.without_columns(
+            self.payload,
+            "RAISE1SEC",
+            "RAISE1SECFLAGS",
+            "RAISE1SECACTUALAVAILABILITY",
+        )
+        first = self.parse(payload)[0]
+        self.assertEqual(tuple(first.fcas.services), FCAS_SERVICES)
+        self.assertEqual(
+            first.fcas.raise_1s,
+            type(first.fcas.raise_1s)(),
+        )
+        self.assertEqual(first.fcas.raise_6s.target_mw, 3.0)
+
+    def test_all_absent_fcas_columns_remain_null_in_fixed_service_map(self) -> None:
+        payload = self.without_columns(
+            self.payload,
+            "RAISE1SEC",
+            "RAISE1SECFLAGS",
+            "RAISE1SECACTUALAVAILABILITY",
+            "LOWER1SEC",
+            "LOWER1SECFLAGS",
+            "LOWER1SECACTUALAVAILABILITY",
+            "RAISE6SEC",
+            "RAISE6SECFLAGS",
+            "RAISE6SECACTUALAVAILABILITY",
+            "LOWER6SEC",
+            "LOWER6SECFLAGS",
+            "LOWER6SECACTUALAVAILABILITY",
+            "RAISE60SEC",
+            "RAISE60SECFLAGS",
+            "RAISE60SECACTUALAVAILABILITY",
+            "LOWER60SEC",
+            "LOWER60SECFLAGS",
+            "LOWER60SECACTUALAVAILABILITY",
+            "RAISE5MIN",
+            "RAISE5MINFLAGS",
+            "RAISE5MINACTUALAVAILABILITY",
+            "LOWER5MIN",
+            "LOWER5MINFLAGS",
+            "LOWER5MINACTUALAVAILABILITY",
+            "RAISEREG",
+            "RAISEREGFLAGS",
+            "RAISEREGACTUALAVAILABILITY",
+            "LOWERREG",
+            "LOWERREGFLAGS",
+            "LOWERREGACTUALAVAILABILITY",
+        )
+        first = self.parse(payload)[0]
+
+        self.assertEqual(tuple(first.fcas.services), FCAS_SERVICES)
+        self.assertEqual(first.fcas.reported_service_count, 0)
+        self.assertTrue(
+            all(service == type(service)() for service in first.fcas.services.values())
+        )
+
+    def test_soc_constructor_defaults_to_empty_fcas_group(self) -> None:
+        observation = NextDaySocObservation(
+            "ADPBA1",
+            datetime(2026, 8, 28, 18, 5, tzinfo=UTC),
+            1.0,
+            0,
+            1,
+            "20260829001",
+            datetime(2026, 8, 28, 18, tzinfo=UTC),
+            "a" * 64,
+            datetime(2026, 8, 29, 18, 10, tzinfo=UTC),
+            datetime(2026, 8, 30, tzinfo=UTC),
+            1,
+            0,
+        )
+
+        self.assertEqual(observation.fcas, NextDayFcasObservation.empty())
+        self.assertEqual(observation.fcas.reported_service_count, 0)
+
+    def test_invalid_fcas_numeric_and_status_values_fail_closed(self) -> None:
+        cases = (
+            {"RAISE6SEC": "-1"},
+            {"RAISE6SECACTUALAVAILABILITY": "-1"},
+            {"RAISE6SECACTUALAVAILABILITY": "NaN"},
+            {"RAISE6SECACTUALAVAILABILITY": "Infinity"},
+            {"RAISE6SECFLAGS": "5"},
+            {"RAISE6SECFLAGS": "1.5"},
+            {"RAISE6SECFLAGS": "malformed"},
+            {"RAISE6SECFLAGS": "1" * 5000},
+        )
+        for changes in cases:
+            with self.subTest(changes=changes):
+                with self.assertRaises(NextDaySocParseError):
+                    self.parse(self.mutate_row(self.payload, **changes))
+
     def test_filters_to_reviewed_duids_without_inventing_missing_rows(self) -> None:
         observations = self.parse(duids=frozenset(("ADPBA1",)))
         self.assertEqual(len(observations), 2)
@@ -79,6 +290,9 @@ class NextDaySocParserTests(unittest.TestCase):
         observation = observations[0]
         self.assertEqual(observation.duid, "ADPBA1")
         self.assertEqual(observation.soc_mwh, 0.0)
+        self.assertEqual(tuple(observation.fcas.services), FCAS_SERVICES)
+        self.assertEqual(observation.fcas.raise_6s.target_mw, 0.0)
+        self.assertEqual(observation.fcas.raise_6s.actual_availability_mw, 0.0)
         self.assertEqual(
             observation.interval_start,
             datetime(2025, 6, 30, 18, 5, tzinfo=UTC),
