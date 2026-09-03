@@ -209,7 +209,7 @@ INSERT INTO historical_backfill_events (
 )
 VALUES (
     %s, %s, %s, %s, %s,
-    jsonb_build_object('records_imported', %s)
+    jsonb_build_object('records_imported', %s::bigint)
 )
 """
 
@@ -228,7 +228,7 @@ INSERT INTO historical_backfill_events (
 )
 VALUES (
     %s, %s, %s, %s, %s,
-    jsonb_build_object('error_summary', %s)
+    jsonb_build_object('error_summary', %s::text)
 )
 """
 

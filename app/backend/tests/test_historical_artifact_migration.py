@@ -235,8 +235,6 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS generator_fcas_5m", migration)
         self.assertIn("fcas_services JSONB NOT NULL", migration)
         self.assertIn("nextday_fcas_map_jsonb_valid", migration)
-        self.assertIn("jsonb_object_length(value) <> 3", migration)
-        self.assertIn("jsonb_object_length(value) <> 10", migration)
         self.assertIn("value ?& ARRAY", migration)
         self.assertIn("(value -> 'target_mw') < '0'::jsonb", migration)
         self.assertIn("(value -> 'actual_availability_mw') < '0'::jsonb", migration)
@@ -310,6 +308,43 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         self.assertIn("SELECT count(*) = 15", migrate_script)
         self.assertIn("'raw_nextday_fcas_observations'", migrate_script)
         self.assertIn("'generator_fcas_5m'", migrate_script)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
+        for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
+            self.assertNotIn(forbidden, upper)
+
+    def test_replaces_fcas_validators_with_supported_additive_migration(self) -> None:
+        app_root = Path(__file__).resolve().parents[2]
+        migration_path = app_root / "migrations" / "011_fcas_validator_compatibility.sql"
+        self.assertTrue(
+            migration_path.exists(),
+            "011 FCAS validator compatibility migration is missing",
+        )
+
+        migration = migration_path.read_text(encoding="utf-8")
+        migrate_script = (app_root / "deploy" / "migrate.sh").read_text(
+            encoding="utf-8"
+        )
+        upper = migration.upper()
+
+        self.assertIn("BEGIN;", upper)
+        self.assertIn("COMMIT;", upper)
+        for function_name in (
+            "nextday_fcas_service_jsonb_valid",
+            "nextday_fcas_map_jsonb_valid",
+        ):
+            self.assertIn(
+                f"CREATE OR REPLACE FUNCTION {function_name}",
+                migration,
+            )
+        self.assertIn("jsonb_object_keys(value)", migration)
+        self.assertIn("COUNT(*)", upper)
+        self.assertNotIn("jsonb_object_length", migration)
+        self.assertIn("010_nextday_fcas.sql", migrate_script)
+        self.assertIn("011_fcas_validator_compatibility.sql", migrate_script)
+        self.assertLess(
+            migrate_script.index("010_nextday_fcas.sql"),
+            migrate_script.index("011_fcas_validator_compatibility.sql"),
+        )
         self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
         for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
             self.assertNotIn(forbidden, upper)

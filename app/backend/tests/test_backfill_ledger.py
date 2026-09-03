@@ -246,6 +246,10 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
                 claim.attempt_number,
             ),
         )
+        self.assertIn(
+            "jsonb_build_object('error_summary', %s::text)",
+            connection.executions[2][0],
+        )
         self.assertEqual(
             connection.executions[2][1],
             (
@@ -308,6 +312,10 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
         self.assertEqual(
             connection.executions[1][1],
             (claim.run_id, claim.feed, claim.report_date, claim.attempt_number),
+        )
+        self.assertIn(
+            "jsonb_build_object('records_imported', %s::bigint)",
+            connection.executions[2][0],
         )
         self.assertEqual(
             connection.executions[2][1],
