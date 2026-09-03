@@ -91,6 +91,7 @@ class HistoricalNextDayBackfillResult:
 class _ValidatedDaily:
     member: NextDayDailyMemberRef
     artifact_sha256: str
+    downloaded_at: datetime
     selected_rows: int
 
 
@@ -263,7 +264,7 @@ def run_nextday_soc_backfill_claim(
                 daily.csv_bytes.decode("utf-8-sig", errors="strict"),
                 duids=duids,
                 source_artifact_id=daily.sha256,
-                downloaded_at=downloaded_at,
+                downloaded_at=nested_result.downloaded_at,
                 ingestion_version=ingestion_version,
                 correction_version=int(member.publication_id),
             ))
@@ -273,7 +274,12 @@ def run_nextday_soc_backfill_claim(
                 if start <= observation.interval_start < end
             )
             validated.append(
-                _ValidatedDaily(member, daily.sha256, len(selected))
+                _ValidatedDaily(
+                    member,
+                    daily.sha256,
+                    nested_result.downloaded_at,
+                    len(selected),
+                )
             )
 
         source_rows = 0
@@ -301,7 +307,7 @@ def run_nextday_soc_backfill_claim(
                 daily.csv_bytes.decode("utf-8-sig", errors="strict"),
                 duids=duids,
                 source_artifact_id=daily.sha256,
-                downloaded_at=downloaded_at,
+                downloaded_at=validated_daily.downloaded_at,
                 ingestion_version=ingestion_version,
                 correction_version=int(validated_daily.member.publication_id),
             ))

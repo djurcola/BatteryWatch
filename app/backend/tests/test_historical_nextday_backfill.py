@@ -72,6 +72,7 @@ class FakeOuterRegistrar:
 class FakeNestedRegistrar:
     receipts = []
     replayed = False
+    canonical_downloaded_at: datetime | None = None
 
     def __init__(self, connection) -> None:
         pass
@@ -79,8 +80,11 @@ class FakeNestedRegistrar:
     def record(self, receipt):
         self.receipts.append(receipt)
         digest = hashlib.sha256(receipt.raw_bytes).hexdigest()
+        downloaded_at = self.canonical_downloaded_at
+        if downloaded_at is None:
+            downloaded_at = receipt.downloaded_at
         return NestedSourceArtifactResult(
-            digest, len(receipt.raw_bytes), self.replayed
+            digest, len(receipt.raw_bytes), downloaded_at, self.replayed
         )
 
 
@@ -104,6 +108,7 @@ class HistoricalNextDayBackfillTests(unittest.TestCase):
         FakeOuterRegistrar.replayed = False
         FakeNestedRegistrar.receipts = []
         FakeNestedRegistrar.replayed = False
+        FakeNestedRegistrar.canonical_downloaded_at = None
 
     def test_validates_all_selected_daily_reports_before_first_ingest(self) -> None:
         raw_outer = b"monthly outer"
@@ -193,7 +198,9 @@ class HistoricalNextDayBackfillTests(unittest.TestCase):
         )
         members = (_member(1), _member(2))
         manifest = NextDayMonthlyArchiveManifest(reference, "a" * 64, members)
-        parse_calls: list[tuple[str, int]] = []
+        canonical_downloaded_at = datetime(2026, 8, 29, tzinfo=UTC)
+        FakeNestedRegistrar.canonical_downloaded_at = canonical_downloaded_at
+        parse_calls: list[tuple[str, int, datetime]] = []
         read_calls: list[int] = []
         ingest_calls: list[tuple[object, ...]] = []
 
@@ -214,7 +221,13 @@ class HistoricalNextDayBackfillTests(unittest.TestCase):
             )
 
         def parse(payload, **kwargs):
-            parse_calls.append((payload, kwargs["correction_version"]))
+            parse_calls.append(
+                (
+                    payload,
+                    kwargs["correction_version"],
+                    kwargs["downloaded_at"],
+                )
+            )
             day = int(payload[-1])
             return (
                 SimpleNamespace(
@@ -261,10 +274,10 @@ class HistoricalNextDayBackfillTests(unittest.TestCase):
         self.assertEqual(
             parse_calls,
             [
-                ("day-1", 47_000_001),
-                ("day-2", 47_000_002),
-                ("day-1", 47_000_001),
-                ("day-2", 47_000_002),
+                ("day-1", 47_000_001, canonical_downloaded_at),
+                ("day-2", 47_000_002, canonical_downloaded_at),
+                ("day-1", 47_000_001, canonical_downloaded_at),
+                ("day-2", 47_000_002, canonical_downloaded_at),
             ],
         )
         self.assertEqual([len(call) for call in ingest_calls], [1, 1])

@@ -80,7 +80,9 @@ class PostgreSQLNestedSourceArtifactRegistrarTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            NestedSourceArtifactResult(digest, len(evidence.raw_bytes), False),
+            NestedSourceArtifactResult(
+                digest, len(evidence.raw_bytes), evidence.downloaded_at, False
+            ),
         )
         self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
         self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
@@ -136,12 +138,56 @@ class PostgreSQLNestedSourceArtifactRegistrarTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            NestedSourceArtifactResult(digest, len(evidence.raw_bytes), True),
+            NestedSourceArtifactResult(
+                digest, len(evidence.raw_bytes), evidence.downloaded_at, True
+            ),
         )
         self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
         self.assertEqual(len(connection.executions), 3)
         self.assertIn("SELECT feed, report_date", connection.executions[2][0])
         self.assertEqual(connection.executions[2][1], (digest,))
+
+    def test_later_download_receipt_replays_without_replacing_first_seen_time(self) -> None:
+        stored_evidence = receipt()
+        replay_evidence = replace(
+            stored_evidence,
+            downloaded_at=stored_evidence.downloaded_at + timedelta(days=1),
+        )
+        digest = hashlib.sha256(replay_evidence.raw_bytes).hexdigest()
+        source_url = f"{OUTER_URL}#{DAILY_FILENAME}"
+        connection = FakeConnection(
+            (
+                ("nextday_soc", date(2025, 7, 1), OUTER_URL, None),
+                None,
+                (
+                    "nextday_soc",
+                    stored_evidence.report_date,
+                    source_url,
+                    stored_evidence.filename,
+                    len(stored_evidence.raw_bytes),
+                    stored_evidence.raw_bytes,
+                    stored_evidence.parent_artifact_sha256,
+                    stored_evidence.artifact_published_at,
+                    stored_evidence.downloaded_at,
+                    stored_evidence.publication_id,
+                ),
+            )
+        )
+
+        result = PostgreSQLNestedSourceArtifactRegistrar(connection).record(
+            replay_evidence
+        )
+
+        self.assertEqual(
+            result,
+            NestedSourceArtifactResult(
+                digest,
+                len(replay_evidence.raw_bytes),
+                stored_evidence.downloaded_at,
+                True,
+            ),
+        )
+        self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
 
     def test_same_sha_with_changed_publication_metadata_fails_closed(self) -> None:
         evidence = receipt()
