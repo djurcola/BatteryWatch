@@ -49,6 +49,8 @@ psql -d "$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/012_current_nextday_artifacts.sql"
 psql -d "$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/013_fcas_regional_prices.sql"
+psql -d "$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
+  --file="$app_dir/migrations/014_fcas_validator_restore_safety.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 --tuples-only --no-align \
   <<'SQL'
 SELECT count(*) = 16

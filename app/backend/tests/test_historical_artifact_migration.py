@@ -349,6 +349,46 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
             self.assertNotIn(forbidden, upper)
 
+    def test_schema_qualifies_nested_fcas_validators_for_restore(self) -> None:
+        app_root = Path(__file__).resolve().parents[2]
+        migration_path = app_root / "migrations" / "014_fcas_validator_restore_safety.sql"
+        self.assertTrue(
+            migration_path.exists(),
+            "014 FCAS restore-safety migration is missing",
+        )
+
+        migration = migration_path.read_text(encoding="utf-8")
+        migrate_script = (app_root / "deploy" / "migrate.sh").read_text(
+            encoding="utf-8"
+        )
+        upper = migration.upper()
+
+        self.assertIn("BEGIN;", upper)
+        self.assertIn("COMMIT;", upper)
+        self.assertIn(
+            "CREATE OR REPLACE FUNCTION public.nextday_fcas_map_jsonb_valid",
+            migration,
+        )
+        self.assertIn(
+            "public.nextday_fcas_service_jsonb_valid(value -> service_name)",
+            migration,
+        )
+        self.assertIn(
+            "CREATE OR REPLACE FUNCTION public.dispatch_fcas_price_map_jsonb_valid",
+            migration,
+        )
+        self.assertIn(
+            "public.dispatch_fcas_service_price_jsonb_valid(value -> service_name)",
+            migration,
+        )
+        self.assertIn("014_fcas_validator_restore_safety.sql", migrate_script)
+        self.assertLess(
+            migrate_script.index("013_fcas_regional_prices.sql"),
+            migrate_script.index("014_fcas_validator_restore_safety.sql"),
+        )
+        for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
+            self.assertNotIn(forbidden, upper)
+
     def test_allows_exact_archive_interval_receipt_urls_after_soc_migration(self) -> None:
         app_root = Path(__file__).resolve().parents[2]
         migration_path = app_root / "migrations" / "009_allow_archive_urls.sql"
