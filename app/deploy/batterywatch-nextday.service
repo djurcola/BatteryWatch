@@ -1,0 +1,23 @@
+[Unit]
+Description=BatteryWatch Next Day CURRENT one-shot collector
+Documentation=file:%h/batterywatch/current/app/deploy/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/batterywatch/current/app/backend
+EnvironmentFile=%h/.config/batterywatch/runtime.env
+ExecStart=%h/batterywatch/current/venv/bin/python -m batterywatch_api.nextday_current_service --assets-path %h/batterywatch/current/app/config/battery_assets.json --limit 1
+TimeoutStartSec=300s
+TimeoutStopSec=20s
+RemainAfterExit=no
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# These capability-dependent protections fail before ExecStart under the
+# unprivileged systemd user manager on the deployment host.
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true

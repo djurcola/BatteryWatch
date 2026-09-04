@@ -5,6 +5,40 @@ all canonical CURRENT Dispatch SCADA and DispatchIS references, reconciles them
 in the durable per-file ledger, and processes a bounded fair oldest/newest
 claim batch independently for each feed; it is not a latest-only poll.
 
+## Daily Next Day CURRENT slice
+
+The separate `batterywatch-nextday.timer` runs the one-shot
+`batterywatch-nextday.service` daily at 21:00 UTC (07:00 AEST), with a bounded
+five-minute randomized delay and persistent catch-up after downtime. It invokes
+`batterywatch_api.nextday_current_service` with the reviewed release asset map
+and `--limit 1`, so each scheduled run processes only the newest incomplete
+Next Day CURRENT artifact. The service is inactive between successful runs;
+the timer is the unit that remains enabled and active. This path is independent
+of the three-minute SCADA/price collector and does not drain its CURRENT backlog.
+
+Install the units for the active immutable release with the user systemd
+manager, then enable the timer:
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp ~/batterywatch/current/app/deploy/batterywatch-nextday.service \
+   ~/batterywatch/current/app/deploy/batterywatch-nextday.timer \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now batterywatch-nextday.timer
+systemctl --user is-active batterywatch-nextday.timer
+# After a successful invocation, this should be inactive:
+systemctl --user is-active batterywatch-nextday.service
+```
+
+For a bounded operator backfill, supply both inclusive report dates:
+
+```sh
+python -m batterywatch_api.nextday_current_service \
+  --assets-path ~/batterywatch/current/app/config/battery_assets.json \
+  --limit 2 --start-date 2026-09-01 --end-date 2026-09-03
+```
+
 ## Fixed safety boundary
 
 - PostgreSQL/TimescaleDB remains loopback-only; do not change listeners, firewall, or proxy routes.

@@ -32,6 +32,7 @@ from batterywatch_api.nextday_current_artifacts import (
     PostgreSQLNextDayCurrentArtifactRegistrar,
 )
 from batterywatch_api.nextday_current_collection import (
+    NextDayCurrentCollectionError,
     NextDayCurrentCollectionResult,
     run_nextday_current_cycle,
 )
@@ -1142,6 +1143,110 @@ class CurrentNextDayCollectionTests(unittest.TestCase):
         self.assertEqual(len(registration_calls), 2)
         self.assertEqual(len(soc_calls), 2)
         self.assertEqual(len(fcas_calls), 2)
+
+    def test_report_window_filters_before_completion_and_selection(self) -> None:
+        refs = tuple(
+            _reference(item, str(index + 1), size=1)
+            for index, item in enumerate(
+                (
+                    date(2026, 8, 31),
+                    date(2026, 9, 1),
+                    date(2026, 9, 2),
+                    date(2026, 9, 4),
+                )
+            )
+        )
+        fetch_calls: list[str] = []
+        completion_dates: list[tuple[date, ...]] = []
+
+        def fetch(url, *, max_bytes):
+            fetch_calls.append(url)
+            self.assertEqual(url, NEXTDAY_CURRENT_INDEX_URL)
+            return _resource(url, b"authoritative index")
+
+        def discover(_html, *, index_url):
+            self.assertEqual(index_url, NEXTDAY_CURRENT_INDEX_URL)
+            return refs
+
+        class CompletionRegistrar:
+            def __init__(self, connection) -> None:
+                del connection
+
+            def read_completed_report_dates(self, references):
+                supplied = tuple(references)
+                completion_dates.append(tuple(item.report_date for item in supplied))
+                return frozenset({date(2026, 9, 1), date(2026, 9, 2)})
+
+        result = run_nextday_current_cycle(
+            "postgresql://private",
+            (_asset(),),
+            limit=2,
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 2),
+            connect=lambda _url, *, connect_timeout: _Connection(),
+            fetch=fetch,
+            discover=discover,
+            registrar_factory=CompletionRegistrar,
+        )
+
+        self.assertEqual(fetch_calls, [NEXTDAY_CURRENT_INDEX_URL])
+        self.assertEqual(completion_dates, [
+            (date(2026, 9, 1), date(2026, 9, 2)),
+        ])
+        self.assertEqual(
+            (result.attempted, result.completed, result.failed, result.remaining),
+            (0, 0, 0, 0),
+        )
+
+    def test_report_window_requires_strict_paired_dates(self) -> None:
+        bad_windows = (
+            (date(2026, 9, 1), None),
+            (None, date(2026, 9, 2)),
+            (datetime(2026, 9, 1), date(2026, 9, 2)),
+            (date(2026, 9, 1), datetime(2026, 9, 2)),
+            (date(2026, 9, 2), date(2026, 9, 1)),
+        )
+        for start_date, end_date in bad_windows:
+            with self.subTest(start_date=start_date, end_date=end_date):
+                with self.assertRaises(ValueError):
+                    run_nextday_current_cycle(
+                        "postgresql://private",
+                        (_asset(),),
+                        start_date=start_date,
+                        end_date=end_date,
+                        fetch=lambda *_args, **_kwargs: self.fail(
+                            "invalid window must fail before fetching"
+                        ),
+                    )
+
+    def test_explicit_report_window_without_authoritative_match_fails_closed(self) -> None:
+        refs = (_reference(date(2026, 8, 31), "1", size=1),)
+        connections: list[_Connection] = []
+
+        def connect(_url, *, connect_timeout):
+            connection = _Connection()
+            connections.append(connection)
+            return connection
+
+        result_fetches: list[str] = []
+
+        def fetch(url, *, max_bytes):
+            result_fetches.append(url)
+            return _resource(url, b"authoritative index")
+
+        with self.assertRaises(NextDayCurrentCollectionError):
+            run_nextday_current_cycle(
+                "postgresql://private",
+                (_asset(),),
+                start_date=date(2026, 9, 1),
+                end_date=date(2026, 9, 3),
+                connect=connect,
+                fetch=fetch,
+                discover=lambda _html, **_kwargs: refs,
+            )
+
+        self.assertEqual(result_fetches, [NEXTDAY_CURRENT_INDEX_URL])
+        self.assertEqual(connections, [])
 
     def test_rejects_invalid_asset_collection_and_limit(self) -> None:
         for bad_assets, bad_limit in (

@@ -145,6 +145,23 @@ def _validate_cycle_inputs(
     return materialized
 
 
+def _validate_report_date_window(
+    start_date: object,
+    end_date: object,
+) -> tuple[date | None, date | None]:
+    """Validate an optional inclusive report-date window without coercion."""
+
+    if (start_date is None) != (end_date is None):
+        raise ValueError("CURRENT Next Day report-date bounds must be paired")
+    if start_date is None:
+        return None, None
+    if type(start_date) is not date or type(end_date) is not date:
+        raise ValueError("CURRENT Next Day report-date bounds must be dates")
+    if start_date > end_date:
+        raise ValueError("CURRENT Next Day report-date start must not follow end")
+    return start_date, end_date
+
+
 def _require_resource(
     resource: object,
     expected_url: str,
@@ -433,6 +450,8 @@ def run_nextday_current_cycle(
     assets: Iterable[BatteryAsset],
     *,
     limit: int = 2,
+    start_date: date | None = None,
+    end_date: date | None = None,
     ingestion_version: int = 1,
     connect: Callable[..., Any] = _default_connect,
     fetch: Callable[..., NemwebHttpResource] = fetch_nemweb_resource,
@@ -444,12 +463,36 @@ def run_nextday_current_cycle(
     soc_ingestor_factory: Callable[[Any], Any] = PostgreSQLNextDaySocIngestor,
     fcas_ingestor_factory: Callable[[Any], Any] = PostgreSQLNextDayFcasIngestor,
 ) -> NextDayCurrentCollectionResult:
-    """Converge at most two incomplete CURRENT report dates per invocation."""
+    """Converge at most two incomplete CURRENT report dates per invocation.
+
+    When supplied, ``start_date`` and ``end_date`` form an inclusive report-date
+    window applied to the authoritative CURRENT listing before completion or
+    artifact work is attempted.
+    """
 
     materialized_assets = _validate_cycle_inputs(
         database_url, assets, limit, ingestion_version
     )
-    references = _fetch_index(fetch, discover)
+    window_start, window_end = _validate_report_date_window(
+        start_date, end_date
+    )
+    discovered_references = _fetch_index(fetch, discover)
+    if window_start is None:
+        references = discovered_references
+    else:
+        assert window_end is not None
+        # Apply the authoritative listing boundary before asking PostgreSQL
+        # about completion.  Nothing outside an explicit operator window may
+        # be selected, fetched, or registered.
+        references = tuple(
+            reference
+            for reference in discovered_references
+            if window_start <= reference.report_date <= window_end
+        )
+        if not references:
+            raise NextDayCurrentCollectionError(
+                "no authoritative CURRENT reference in requested window"
+            )
     with _connection_scope(connect, database_url) as connection:
         completed = _validate_completed_result(
             registrar_factory(connection).read_completed_report_dates(references),
