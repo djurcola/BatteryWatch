@@ -40,6 +40,8 @@ psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/009_allow_archive_urls.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
+  --file="$app_dir/migrations/009_current_artifact_ledger.sql"
+psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/010_nextday_fcas.sql"
 psql -d "$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/011_fcas_validator_compatibility.sql"
@@ -47,7 +49,7 @@ psql -d "$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 \
   --file="$app_dir/migrations/012_current_nextday_artifacts.sql"
 psql --dbname="$database_url" --no-psqlrc --set=ON_ERROR_STOP=1 --tuples-only --no-align \
   <<'SQL'
-SELECT count(*) = 15
+SELECT count(*) = 16
 FROM information_schema.tables
 WHERE table_schema = 'public'
   AND table_name IN (
@@ -58,7 +60,7 @@ WHERE table_schema = 'public'
     'historical_backfill_items', 'historical_backfill_events',
     'historical_source_artifacts', 'historical_backfill_item_artifacts',
     'raw_nextday_soc_observations', 'raw_nextday_fcas_observations',
-    'generator_fcas_5m'
+    'generator_fcas_5m', 'current_artifact_ledger'
   );
 SQL
 unset database_url

@@ -235,13 +235,11 @@ def extract_dispatch_price_zip(
     )
 
 
-def collect_latest_dispatch_prices(
-    ingestion_version: int,
-    correction_version: int = 0,
+def discover_current_dispatch_prices(
     *,
     fetch: Callable[..., NemwebHttpResource] = fetch_nemweb_resource,
-) -> DispatchPriceCollection:
-    """Fetch, verify and parse the latest official five-region price report."""
+) -> tuple[DispatchPriceArtifactRef, ...]:
+    """Fetch and discover every canonical CURRENT DispatchIS reference."""
 
     index_resource = fetch(
         DISPATCH_PRICE_INDEX_URL,
@@ -249,18 +247,28 @@ def collect_latest_dispatch_prices(
     )
     try:
         index_html = index_resource.body.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise NemwebDispatchPriceError("invalid DispatchIS index") from exc
-    references = discover_dispatch_price_artifacts(
+    except UnicodeDecodeError:
+        raise NemwebDispatchPriceError("invalid DispatchIS index") from None
+    return discover_dispatch_price_artifacts(
         index_html,
         index_url=DISPATCH_PRICE_INDEX_URL,
     )
-    latest = references[-1]
+
+
+def collect_dispatch_price_artifact(
+    reference: DispatchPriceArtifactRef,
+    ingestion_version: int,
+    correction_version: int = 0,
+    *,
+    fetch: Callable[..., NemwebHttpResource] = fetch_nemweb_resource,
+) -> DispatchPriceCollection:
+    """Fetch, verify and parse one canonical CURRENT DispatchIS artifact."""
+
     artifact_resource = fetch(
-        latest.url,
+        reference.url,
         max_bytes=DISPATCH_PRICE_ARTIFACT_MAX_BYTES,
     )
-    artifact = extract_dispatch_price_zip(latest, artifact_resource.body)
+    artifact = extract_dispatch_price_zip(reference, artifact_resource.body)
     records = parse_dispatch_price_mms_csv(
         artifact.csv_payload,
         source_id=artifact.reference.source_artifact_id,
@@ -268,6 +276,47 @@ def collect_latest_dispatch_prices(
         correction_version=correction_version,
     )
     return DispatchPriceCollection(artifact=artifact, records=records)
+
+
+def collect_current_dispatch_prices(
+    ingestion_version: int,
+    correction_version: int = 0,
+    *,
+    fetch: Callable[..., NemwebHttpResource] = fetch_nemweb_resource,
+) -> tuple[DispatchPriceCollection, ...]:
+    """Fetch and parse every canonical CURRENT DispatchIS artifact in order."""
+
+    references = discover_current_dispatch_prices(fetch=fetch)
+    return tuple(
+        collect_dispatch_price_artifact(
+            reference,
+            ingestion_version,
+            correction_version,
+            fetch=fetch,
+        )
+        for reference in references
+    )
+
+
+def collect_latest_dispatch_prices(
+    ingestion_version: int,
+    correction_version: int = 0,
+    *,
+    fetch: Callable[..., NemwebHttpResource] = fetch_nemweb_resource,
+) -> DispatchPriceCollection:
+    """Fetch and verify the latest official five-region price report.
+
+    This compatibility adapter remains available to explicit latest callers;
+    the database collector uses the ledger-backed per-artifact path.
+    """
+
+    reference = discover_current_dispatch_prices(fetch=fetch)[-1]
+    return collect_dispatch_price_artifact(
+        reference,
+        ingestion_version,
+        correction_version,
+        fetch=fetch,
+    )
 
 
 __all__ = [
@@ -278,7 +327,10 @@ __all__ = [
     "DispatchPriceArtifactRef",
     "DispatchPriceCollection",
     "NemwebDispatchPriceError",
+    "collect_current_dispatch_prices",
+    "collect_dispatch_price_artifact",
     "collect_latest_dispatch_prices",
+    "discover_current_dispatch_prices",
     "discover_dispatch_price_artifacts",
     "extract_dispatch_price_zip",
 ]

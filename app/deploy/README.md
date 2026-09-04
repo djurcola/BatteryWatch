@@ -1,5 +1,10 @@
 # BatteryWatch activation runbook
 
+The collector runs at a 180-second (three-minute) cadence. Each poll enumerates
+all canonical CURRENT Dispatch SCADA and DispatchIS references, reconciles them
+in the durable per-file ledger, and processes a bounded fair oldest/newest
+claim batch independently for each feed; it is not a latest-only poll.
+
 ## Fixed safety boundary
 
 - PostgreSQL/TimescaleDB remains loopback-only; do not change listeners, firewall, or proxy routes.
@@ -20,7 +25,7 @@
 1. Record current API health and unit state; confirm response says `data_mode=fixture`.
 2. Create a fresh custom-format backup with `backup-verify.sh`; verify its checksum and `pg_restore --list`.
 3. Restore that backup into an isolated temporary database, run the engine integrity checks, and prove row-count parity for existing domain tables. Drop the temporary database only after recording redacted parity evidence.
-4. Export `BATTERYWATCH_BACKUP_MANIFEST` as the fresh `.sha256` path from step 2, then run `migrate.sh`; it rechecks checksum and age before verifying seven application tables, including immutable DispatchIS price artifacts.
+4. Export `BATTERYWATCH_BACKUP_MANIFEST` as the fresh `.sha256` path from step 2, then run `migrate.sh`; it rechecks checksum and age before verifying sixteen application tables, including immutable DispatchIS price artifacts and the per-file CURRENT artifact ledger.
 5. Run one collector cycle from the candidate release with `python -m batterywatch_api.collector_service --once`.
 6. Query `verify-live.sql` plus `dispatch_price_artifacts`/`nem_price_5m`; require fresh SCADA and DispatchIS artifacts, raw power observations, mapped `generator_power_5m` rows, exactly five current regional price rows, and at least one reviewed battery DUID.
 7. Install the two user units under `~/.config/systemd/user/`, reload the user manager, enable/start the collector, and verify two successive five-minute artifacts or an exact replay followed by a new artifact.

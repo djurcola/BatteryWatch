@@ -3,21 +3,32 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
+from dataclasses import replace
 from datetime import datetime, timezone
 from io import StringIO
+import json
 from pathlib import Path
 from typing import Any
 import unittest
+from unittest.mock import patch
 
 from batterywatch_api.battery_assets import BatteryAsset
 from batterywatch_api.collector import DispatchScadaCollection
 from batterywatch_api.collector_service import (
+    CollectorCycleCounters,
     CollectorCycleResult,
+    CollectorFeedCounters,
     main,
     run_collection_cycle,
+    run_current_collection_cycle,
     run_database_cycle,
     run_price_collection_cycle,
     run_polling_loop,
+)
+from batterywatch_api.collector_ledger import (
+    CurrentArtifactClaim,
+    CurrentArtifactLedgerReconciliation,
+    CurrentArtifactReference,
 )
 from batterywatch_api.dispatch_price_ingestion import DispatchPriceIngestionResult
 from batterywatch_api.dispatch_scada_ingestion import DispatchScadaIngestionResult
@@ -285,6 +296,360 @@ class CollectorServiceTests(unittest.TestCase):
 
         self.assertIs(raised.exception, failure)
         self.assertEqual(connection.close_calls, 1)
+
+    def test_current_cycle_reconciles_all_references_and_fetches_claims(self) -> None:
+        from batterywatch_api.collector_ledger import CurrentArtifactClaim
+        from batterywatch_api.collector_service import run_current_collection_cycle
+
+        references = tuple(
+            DispatchScadaArtifactRef(
+                url=(
+                    "https://www.nemweb.com.au/REPORTS/CURRENT/Dispatch_SCADA/"
+                    f"PUBLIC_DISPATCHSCADA_2026082912{minute:02d}_{source_id}.zip"
+                ),
+                zip_filename=(
+                    f"PUBLIC_DISPATCHSCADA_2026082912{minute:02d}_{source_id}.zip"
+                ),
+                source_artifact_id=source_id,
+                report_timestamp=datetime(2026, 8, 29, 2, minute, tzinfo=UTC),
+            )
+            for minute, source_id in (
+                (0, "0000000000000001"),
+                (5, "0000000000000002"),
+                (10, "0000000000000003"),
+            )
+        )
+        older, middle, newer = references
+        reconciled: list[tuple[CurrentArtifactReference, ...]] = []
+        fetched: list[str] = []
+
+        class FakeLedger:
+            def reconcile(self, refs):
+                materialized = tuple(refs)
+                if materialized:
+                    reconciled.append(materialized)
+
+            def claim_pending(self, feed, *, limit):
+                if feed == "dispatch_scada":
+                    self.limit = limit
+                    return (
+                        CurrentArtifactClaim(
+                            next(item for item in reconciled[0] if item.source_artifact_id == middle.source_artifact_id),
+                            1,
+                        ),
+                        CurrentArtifactClaim(
+                            next(item for item in reconciled[0] if item.source_artifact_id == newer.source_artifact_id),
+                            1,
+                        ),
+                    )
+                return ()
+
+            def complete(self, claim):
+                del claim
+
+        def collect(reference, *, ingestion_version, correction_version, fetch):
+            del ingestion_version, correction_version, fetch
+            fetched.append(reference.source_artifact_id)
+            return DispatchScadaCollection(
+                artifact=DispatchScadaArtifact(
+                    reference=reference,
+                    csv_member_name=reference.zip_filename.removesuffix(".zip") + ".CSV",
+                    csv_payload="validated-csv",
+                    zip_sha256="a" * 64,
+                    raw_zip=reference.source_artifact_id.encode("ascii"),
+                ),
+                records=(
+                    GeneratorPower5m(
+                        generator_id="BAT1",
+                        interval_start=reference.report_timestamp,
+                        power_mw=0.0,
+                        source_id=reference.source_artifact_id,
+                        source_timestamp=reference.report_timestamp,
+                        ingestion_version=0,
+                    ),
+                ),
+            )
+
+        result = run_current_collection_cycle(
+            object(),
+            (
+                BatteryAsset(
+                    "BAT1", "Battery One", "NSW1", 10, 20,
+                    "reviewed-registry", datetime(2025, 3, 31, tzinfo=UTC),
+                ),
+            ),
+            discover_scada=lambda **kwargs: references,
+            discover_prices=lambda **kwargs: (),
+            ledger_factory=lambda connection: FakeLedger(),
+            collect_scada_artifact=collect,
+            max_artifacts_per_feed=2,
+            ingestor_factory=CapturingIngestor,
+            price_ingestor_factory=CapturingPriceIngestor,
+        )
+
+        self.assertEqual(
+            tuple(item.source_artifact_id for item in reconciled[0]),
+            tuple(item.source_artifact_id for item in references),
+        )
+        self.assertEqual(fetched, [middle.source_artifact_id, newer.source_artifact_id])
+        self.assertEqual(result.counters.attempted, 2)
+        self.assertEqual(result.counters.completed, 2)
+        self.assertNotIn(older.source_artifact_id, fetched)
+
+    def test_current_cycle_isolates_feed_failures_and_reports_separate_counters(self) -> None:
+        asset = BatteryAsset(
+            "BAT1", "Battery One", "NSW1", 10, 20,
+            "reviewed-registry", datetime(2025, 3, 31, tzinfo=UTC),
+        )
+        scada_filename = "PUBLIC_DISPATCHSCADA_202608291200_1.zip"
+        scada_reference = DispatchScadaArtifactRef(
+            "https://www.nemweb.com.au/REPORTS/CURRENT/Dispatch_SCADA/" + scada_filename,
+            scada_filename,
+            "1",
+            datetime(2026, 8, 29, 2, 0, tzinfo=UTC),
+        )
+        price_reference = price_collection().artifact.reference
+        rows: dict[tuple[str, str], CurrentArtifactReference] = {}
+        missed: list[str] = []
+
+        class Ledger:
+            def reconcile(self, references):
+                materialized = tuple(references)
+                for item in materialized:
+                    rows[(item.feed, item.source_artifact_id)] = item
+                return CurrentArtifactLedgerReconciliation(len(materialized), len(materialized))
+
+            def claim_pending(self, feed, *, limit):
+                del limit
+                return tuple(
+                    CurrentArtifactClaim(item, 1)
+                    for (row_feed, _source_id), item in rows.items()
+                    if row_feed == feed
+                )
+
+            def complete(self, claim):
+                del claim
+
+            def miss(self, claim, *, error_summary):
+                missed.append(claim.source_artifact_id + ":" + error_summary)
+
+        def fail_scada(reference, **kwargs):
+            del reference, kwargs
+            raise RuntimeError("transport https://secret.invalid/?token=private")
+
+        result = run_current_collection_cycle(
+            object(),
+            (asset,),
+            discover_scada=lambda **kwargs: (scada_reference,),
+            discover_prices=lambda **kwargs: (price_reference,),
+            collect_scada_artifact=fail_scada,
+            collect_price_artifact=lambda reference, **kwargs: price_collection(),
+            ledger_factory=lambda connection: Ledger(),
+            ingestor_factory=CapturingIngestor,
+            price_ingestor_factory=CapturingPriceIngestor,
+        )
+
+        self.assertEqual(
+            result.dispatch_scada,
+            CollectorFeedCounters(1, 1, 0, 0, 1),
+        )
+        self.assertEqual(
+            result.dispatch_price,
+            CollectorFeedCounters(1, 1, 1, 0, 0),
+        )
+        self.assertEqual(result.counters, CollectorCycleCounters(2, 2, 1, 0, 1))
+        self.assertEqual(result.price_count, 5)
+        self.assertEqual(result.status, "error")
+        self.assertEqual(len(missed), 1)
+        self.assertTrue(result.errors)
+        self.assertNotIn("secret.invalid", " ".join(result.errors))
+        self.assertNotIn("token=private", " ".join(result.errors))
+
+    def test_current_discovery_failure_does_not_block_other_feed(self) -> None:
+        asset = BatteryAsset(
+            "BAT1", "Battery One", "NSW1", 10, 20,
+            "reviewed-registry", datetime(2025, 3, 31, tzinfo=UTC),
+        )
+        price_reference = price_collection().artifact.reference
+        rows: dict[str, CurrentArtifactReference] = {}
+
+        class Ledger:
+            def reconcile(self, references):
+                materialized = tuple(references)
+                for item in materialized:
+                    rows[item.feed] = item
+                return CurrentArtifactLedgerReconciliation(len(materialized), len(materialized))
+
+            def claim_pending(self, feed, *, limit):
+                del limit
+                item = rows.get(feed)
+                return () if item is None else (CurrentArtifactClaim(item, 1),)
+
+            def complete(self, claim):
+                del claim
+
+        def fail_discovery(**kwargs):
+            del kwargs
+            raise RuntimeError("index unavailable")
+
+        result = run_current_collection_cycle(
+            object(),
+            (asset,),
+            discover_scada=fail_discovery,
+            discover_prices=lambda **kwargs: (price_reference,),
+            collect_price_artifact=lambda reference, **kwargs: price_collection(),
+            ledger_factory=lambda connection: Ledger(),
+            ingestor_factory=CapturingIngestor,
+            price_ingestor_factory=CapturingPriceIngestor,
+        )
+
+        self.assertEqual(result.dispatch_scada, CollectorFeedCounters())
+        self.assertEqual(result.dispatch_price, CollectorFeedCounters(1, 1, 1, 0, 0))
+        self.assertEqual(result.price_count, 5)
+        self.assertEqual(result.errors, ("dispatch_scada:discover:RuntimeError",))
+
+    def test_completion_failure_after_commit_is_not_marked_missed(self) -> None:
+        asset = BatteryAsset(
+            "BAT1", "Battery One", "NSW1", 10, 20,
+            "reviewed-registry", datetime(2025, 3, 31, tzinfo=UTC),
+        )
+        source_reference = collection().artifact.reference
+        missed: list[str] = []
+
+        class Ledger:
+            def reconcile(self, references):
+                return CurrentArtifactLedgerReconciliation(len(tuple(references)), 1)
+
+            def claim_pending(self, feed, *, limit):
+                del limit
+                if feed != "dispatch_scada":
+                    return ()
+                current = CurrentArtifactReference(
+                    "dispatch_scada",
+                    source_reference.source_artifact_id,
+                    source_reference.url,
+                    source_reference.zip_filename,
+                    source_reference.report_timestamp,
+                )
+                return (CurrentArtifactClaim(current, 1),)
+
+            def complete(self, claim):
+                del claim
+                raise RuntimeError("completion unavailable")
+
+            def miss(self, claim, *, error_summary):
+                missed.append(claim.source_artifact_id + error_summary)
+
+        result = run_current_collection_cycle(
+            object(),
+            (asset,),
+            discover_scada=lambda **kwargs: (source_reference,),
+            discover_prices=lambda **kwargs: (),
+            collect_scada_artifact=lambda reference, **kwargs: collection(),
+            ledger_factory=lambda connection: Ledger(),
+            ingestor_factory=CapturingIngestor,
+            price_ingestor_factory=CapturingPriceIngestor,
+        )
+
+        self.assertEqual(result.raw_observation_count, 2)
+        self.assertEqual(result.dispatch_scada, CollectorFeedCounters(1, 1, 0, 0, 0))
+        self.assertEqual(missed, [])
+        self.assertEqual(result.errors, ("dispatch_scada:complete:RuntimeError",))
+
+    def test_database_cycle_defaults_to_current_ledger_runtime(self) -> None:
+        connection = ClosingConnection()
+        expected = CollectorCycleResult(
+            DispatchScadaIngestionResult(0, 0, False),
+            DispatchPriceIngestionResult(0, False),
+        )
+        asset = BatteryAsset(
+            "BAT1", "Battery One", "NSW1", 10, 20,
+            "reviewed-registry", datetime(2025, 3, 31, tzinfo=UTC),
+        )
+
+        with patch(
+            "batterywatch_api.collector_service.run_current_collection_cycle",
+            return_value=expected,
+        ) as current:
+            result = run_database_cycle(
+                "postgresql://private",
+                (asset,),
+                connect=lambda database_url, *, connect_timeout: connection,
+            )
+
+        self.assertIs(result, expected)
+        current.assert_called_once()
+        self.assertEqual(connection.close_calls, 1)
+
+    def test_polling_loop_emits_one_result_before_clean_stop(self) -> None:
+        result = CollectorCycleResult(
+            DispatchScadaIngestionResult(0, 0, False),
+            DispatchPriceIngestionResult(0, False),
+        )
+        emitted: list[CollectorCycleResult] = []
+        waits: list[float] = []
+
+        returned = run_polling_loop(
+            lambda: result,
+            interval_seconds=180,
+            wait=lambda seconds: (waits.append(seconds) or True),
+            emit=emitted.append,
+        )
+
+        self.assertIs(returned, result)
+        self.assertEqual(emitted, [result])
+        self.assertEqual(waits, [180.0])
+
+    def test_main_long_running_cycle_does_not_duplicate_emitted_result(self) -> None:
+        result = CollectorCycleResult(
+            DispatchScadaIngestionResult(0, 0, False),
+            DispatchPriceIngestionResult(0, False),
+            CollectorCycleCounters(2, 1, 1, 0, 0),
+            dispatch_scada=CollectorFeedCounters(1, 1, 1, 0, 0),
+            dispatch_price=CollectorFeedCounters(1, 0, 0, 0, 0),
+        )
+        output = StringIO()
+
+        def fake_loop(cycle, *, interval_seconds, wait, emit):
+            self.assertEqual(interval_seconds, 180)
+            del wait
+            emitted = cycle()
+            emit(emitted)
+            return emitted
+
+        with patch(
+            "batterywatch_api.collector_service.run_database_cycle",
+            return_value=result,
+        ), patch(
+            "batterywatch_api.collector_service.run_polling_loop",
+            side_effect=fake_loop,
+        ):
+            with redirect_stdout(output):
+                exit_code = main(
+                    [],
+                    environ={
+                        "BATTERYWATCH_DATABASE_URL": "postgresql://private",
+                        "BATTERYWATCH_ASSETS_PATH": str(
+                            Path(__file__).resolve().parents[2]
+                            / "config"
+                            / "battery_assets.json"
+                        ),
+                    },
+                )
+
+        self.assertEqual(exit_code, 0)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        payload = json.loads(lines[0])
+        self.assertEqual(payload["dispatch_scada"], {
+            "discovered": 1,
+            "attempted": 1,
+            "completed": 1,
+            "replayed": 0,
+            "missed": 0,
+        })
+        self.assertEqual(payload["dispatch_price"]["discovered"], 1)
+        self.assertEqual(payload["discovered"], 2)
 
     def test_polling_loop_runs_immediately_then_stops_during_wait(self) -> None:
         cycle_calls = []
