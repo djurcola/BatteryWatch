@@ -11,8 +11,10 @@ from fastapi.testclient import TestClient
 import batterywatch_api.main as main
 from batterywatch_api.storage import (
     FCAS_SERVICES,
+    FcasRegionalServicePrice,
     FcasService5m,
     GeneratorFcas5m,
+    RegionalPrice5m,
     GeneratorMetadata,
     InMemoryRepository,
     PostgreSQLConnection,
@@ -96,6 +98,7 @@ class DatabaseFcasApiTests(unittest.TestCase):
         clock=lambda: datetime(2026, 1, 1, 12, tzinfo=UTC),
         read_generator=None,
         list_fcas=None,
+        list_prices=None,
     ):
         metadata = _metadata()
 
@@ -109,6 +112,9 @@ class DatabaseFcasApiTests(unittest.TestCase):
                     if list_fcas is not None:
                         return list_fcas(generator_id, start, end)
                     return tuple(rows)
+
+                def list_prices(self, region, start=None, end=None):
+                    return () if list_prices is None else list_prices(region, start, end)
 
             yield Repository()
 
@@ -169,6 +175,65 @@ class DatabaseFcasApiTests(unittest.TestCase):
             0.0,
         )
         self.assertFalse(body["points"][0]["services"]["raise_6s"]["response_verified"])
+
+    def test_estimated_gross_payment_joins_same_interval_regional_price(self):
+        prices = {
+            service: FcasRegionalServicePrice(None, 0) for service in FCAS_SERVICES
+        }
+        prices["raise_1s"] = FcasRegionalServicePrice(12.0, 0)
+        prices["raise_6s"] = FcasRegionalServicePrice(24.0, 2)
+        price_row = RegionalPrice5m(
+            region="NSW1", interval_start=START, price_aud_per_mwh=10.0,
+            price_status="available", source_id="42", source_timestamp=START,
+            ingestion_version=42, fcas_prices=prices,
+        )
+        row = _fcas_row(changes={"raise_6s": (2.0, 1, 99.0), "raise_1s": (0.0, 1, 0.0)})
+        response = self._client(
+            rows=(row,), list_prices=lambda *_: (price_row,)
+        ).get("/api/fcas", params={
+            "generator": "DB-FCAS", "start": "2026-01-01T00:00:00Z",
+            "end": "2026-01-01T00:05:00Z", "services": "raise_1s,raise_6s",
+        })
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        raise_6s = body["points"][0]["services"]["raise_6s"]
+        self.assertEqual((raise_6s["price_aud_per_mw_hour"], raise_6s["estimated_payment_aud"]), (24.0, 4.0))
+        raise_1s = body["points"][0]["services"]["raise_1s"]
+        self.assertEqual((raise_1s["price_aud_per_mw_hour"], raise_1s["estimated_payment_aud"]), (12.0, 0.0))
+        self.assertEqual(body["estimate"]["label"], "Estimated gross FCAS enablement payment")
+        self.assertEqual(body["estimate"]["payment_unit"], "AUD")
+        self.assertEqual(body["estimate"]["expected_service_intervals"], 2)
+        self.assertEqual(body["estimate"]["estimated_payment_aud"], 4.0)
+        self.assertEqual(body["service_summaries"]["raise_1s"]["estimated_payment_aud"], 0.0)
+        self.assertEqual(body["service_summaries"]["raise_6s"]["payment_intervals"], 1)
+
+    def test_price_coverage_is_reported_when_the_fcas_target_is_missing(self):
+        prices = {
+            service: FcasRegionalServicePrice(None, 0) for service in FCAS_SERVICES
+        }
+        prices["raise_6s"] = FcasRegionalServicePrice(24.0, 0)
+        price_row = RegionalPrice5m(
+            region="NSW1", interval_start=START, price_aud_per_mwh=10.0,
+            price_status="available", source_id="42", source_timestamp=START,
+            ingestion_version=42, fcas_prices=prices,
+        )
+
+        response = self._client(
+            rows=(), list_prices=lambda *_: (price_row,)
+        ).get("/api/fcas", params={
+            "generator": "DB-FCAS", "start": "2026-01-01T00:00:00Z",
+            "end": "2026-01-01T00:05:00Z", "services": "raise_6s",
+        })
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        point = body["points"][0]["services"]["raise_6s"]
+        self.assertIsNone(point["target_mw"])
+        self.assertEqual(point["price_aud_per_mw_hour"], 24.0)
+        self.assertIsNone(point["estimated_payment_aud"])
+        self.assertEqual(body["estimate"]["target_intervals"], 0)
+        self.assertEqual(body["estimate"]["price_intervals"], 1)
+        self.assertEqual(body["estimate"]["payment_intervals"], 0)
 
     def test_range_and_service_filter_are_validated_before_storage_reads(self):
         calls = []
@@ -401,6 +466,10 @@ class DatabaseFcasApiTests(unittest.TestCase):
             body["service_summaries"]["raise_1s"],
             {
                 "reported_intervals": 1,
+                "target_intervals": 1,
+                "price_intervals": 0,
+                "payment_intervals": 0,
+                "estimated_payment_aud": None,
                 "enabled_intervals": 0,
                 "cleared_intervals": 1,
                 "participating_intervals": 0,
@@ -414,6 +483,10 @@ class DatabaseFcasApiTests(unittest.TestCase):
             body["service_summaries"]["raise_6s"],
             {
                 "reported_intervals": 2,
+                "target_intervals": 2,
+                "price_intervals": 0,
+                "payment_intervals": 0,
+                "estimated_payment_aud": None,
                 "enabled_intervals": 2,
                 "cleared_intervals": 1,
                 "participating_intervals": 1,

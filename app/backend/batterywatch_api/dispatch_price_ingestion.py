@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable, Iterator, Protocol
 
+from psycopg.types.json import Jsonb
+
 from .storage import RegionalPrice5m
 
 
@@ -85,9 +87,10 @@ INSERT INTO nem_price_5m (
     source_timestamp,
     ingestion_version,
     correction_version,
-    quality_flags
+    quality_flags,
+    fcas_prices
 )
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
 ON CONFLICT (region, interval_start) DO UPDATE
 SET price_aud_per_mwh = EXCLUDED.price_aud_per_mwh,
     price_status = EXCLUDED.price_status,
@@ -98,10 +101,26 @@ SET price_aud_per_mwh = EXCLUDED.price_aud_per_mwh,
     source_timestamp = EXCLUDED.source_timestamp,
     ingestion_version = EXCLUDED.ingestion_version,
     correction_version = EXCLUDED.correction_version,
-    quality_flags = EXCLUDED.quality_flags
+    quality_flags = EXCLUDED.quality_flags,
+    fcas_prices = EXCLUDED.fcas_prices
 WHERE (EXCLUDED.correction_version, EXCLUDED.ingestion_version, EXCLUDED.source_timestamp)
     > (nem_price_5m.correction_version,
        nem_price_5m.ingestion_version, nem_price_5m.source_timestamp)
+RETURNING 1
+"""
+
+# An exact artifact replay may fill only the nullable projection added after
+# historical energy rows existed.  Every energy/provenance field must still be
+# identical, and a populated projection is immutable.
+_FCAS_REPLAY_FILL_SQL = """
+UPDATE nem_price_5m
+SET fcas_prices = %s
+WHERE region = %s AND interval_start = %s
+  AND fcas_prices IS NULL
+  AND price_aud_per_mwh IS NOT DISTINCT FROM %s
+  AND price_status = %s AND intervention = %s AND apc_flag = %s
+  AND market_suspended = %s AND source_id = %s AND source_timestamp = %s
+  AND ingestion_version = %s AND correction_version = %s AND quality_flags = %s
 RETURNING 1
 """
 
@@ -138,6 +157,18 @@ def _receipt_matches(
     )
 
 
+def _fcas_price_value(record: RegionalPrice5m) -> Jsonb:
+    if record.fcas_prices is None:
+        raise ValueError("DispatchIS price record must include FCAS prices")
+    return Jsonb({
+        service: {
+            "price_aud_per_mw_hour": record.fcas_prices[service].price_aud_per_mw_hour,
+            "apc_flag": record.fcas_prices[service].apc_flag,
+        }
+        for service in record.fcas_prices
+    })
+
+
 def _price_parameters(record: RegionalPrice5m) -> tuple[Any, ...]:
     return (
         record.region,
@@ -152,6 +183,7 @@ def _price_parameters(record: RegionalPrice5m) -> tuple[Any, ...]:
         record.ingestion_version,
         record.correction_version,
         list(record.quality_flags),
+        _fcas_price_value(record),
     )
 
 
@@ -203,6 +235,13 @@ class PostgreSQLDispatchPriceIngestor:
                             "DispatchIS price artifact conflicts with stored evidence"
                         )
                     replayed = True
+                    for record in materialized:
+                        parameters = _price_parameters(record)
+                        cursor.execute(
+                            _FCAS_REPLAY_FILL_SQL,
+                            (parameters[-1],) + parameters[:12],
+                        )
+                        cursor.fetchone()
                 else:
                     for record in materialized:
                         cursor.execute(_PRICE_UPSERT_SQL, _price_parameters(record))

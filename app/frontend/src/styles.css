@@ -28,9 +28,12 @@ select { display: block; width: 100%; margin-top: 8px; background: #0d1d31; colo
 .fcas-panel { min-height: 0; margin-top: 18px; padding-bottom: 20px; }
 .fcas-panel .panel-heading { margin-bottom: 8px; }
 .fcas-state { text-transform: lowercase; }
-.fcas-disclaimer, .fcas-coverage { margin: 10px 20px; color: #cbd5e1; font-size: 13px; line-height: 1.5; }
+.fcas-disclaimer, .fcas-coverage, .fcas-formula { margin: 10px 20px; color: #cbd5e1; font-size: 13px; line-height: 1.5; }
 .fcas-disclaimer { color: #fbbf24; }
-.fcas-coverage { color: #94a3b8; }
+.fcas-coverage, .fcas-formula { color: #94a3b8; }
+.fcas-estimate { align-items: baseline; background: #102238; border: 1px solid #1b6a65; border-radius: 9px; display: flex; flex-wrap: wrap; gap: 7px 12px; margin: 10px 20px; padding: 12px; }
+.fcas-estimate span, .fcas-estimate small { color: #94a3b8; font-size: 12px; }
+.fcas-estimate strong { color: #f8fafc; font-size: 20px; }
 .fcas-error { margin: 10px 20px; }
 .fcas-chart { width: 100%; min-height: 320px; height: 320px; }
 .fcas-summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 10px 20px 0; }
@@ -65,7 +68,7 @@ h2 { margin: 0; font-size: 18px; }
   .panel { min-height: 470px; border-left: 0; border-right: 0; border-radius: 0; }
   .fcas-panel { min-height: 0; padding-top: 18px; }
   .fcas-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-left: 16px; margin-right: 16px; }
-  .fcas-disclaimer, .fcas-coverage { margin-left: 16px; margin-right: 16px; }
+  .fcas-disclaimer, .fcas-coverage, .fcas-formula, .fcas-estimate { margin-left: 16px; margin-right: 16px; }
   .fcas-error { margin-left: 16px; margin-right: 16px; }
   .panel-heading { display: block; padding: 0 16px; }
   .panel-actions { display: flex; justify-content: space-between; flex-wrap: wrap; margin-top: 14px; }

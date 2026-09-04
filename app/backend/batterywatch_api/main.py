@@ -1,6 +1,6 @@
 """Standalone BatteryWatch HTTP API."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -25,6 +25,7 @@ from .models import (
     Coverage,
     EstimateMetadata,
     FcasCoverage,
+    FcasEstimateMetadata,
     FcasLatestFinalizedMetadata,
     FcasPoint,
     FcasPublicationState,
@@ -40,7 +41,12 @@ from .models import (
     SeriesResponse,
     SeriesSummary,
 )
-from .storage import FCAS_CLEARANCE_EPSILON_MW, FCAS_SERVICES
+from .storage import (
+    FCAS_CLEARANCE_EPSILON_MW,
+    FCAS_SERVICES,
+    FcasRegionalServicePrice,
+    RegionalPrice5m,
+)
 
 router = APIRouter()
 
@@ -229,7 +235,9 @@ def _fcas_raw_field(raw: object, field: str) -> object:
     return getattr(raw, field)
 
 
-def _fcas_service_point(raw: object | None) -> FcasServicePoint:
+def _fcas_service_point(
+    raw: object | None, price_aud_per_mw_hour: float | None = None
+) -> FcasServicePoint:
     if raw is None:
         target = status = actual = None
     elif isinstance(raw, Mapping):
@@ -256,8 +264,14 @@ def _fcas_service_point(raw: object | None) -> FcasServicePoint:
     trapped = status == 3
     stranded = status == 4
     cleared = target is not None and target > FCAS_CLEARANCE_EPSILON_MW
+    payment = (
+        None if target is None or price_aud_per_mw_hour is None
+        else target * price_aud_per_mw_hour / 12
+    )
     return FcasServicePoint(
         target_mw=target,
+        price_aud_per_mw_hour=price_aud_per_mw_hour,
+        estimated_payment_aud=payment,
         enablement_status=status,
         actual_availability_mw=actual,
         enabled=enabled,
@@ -296,6 +310,8 @@ def _fcas_rows_in_window(
 
 def _fcas_projected_points(
     rows: list[object],
+    price_rows: Iterable[RegionalPrice5m],
+    region: str,
     selected_services: tuple[FcasServiceName, ...],
     requested_start: datetime,
     requested_end: datetime,
@@ -303,19 +319,41 @@ def _fcas_projected_points(
     list[FcasPoint],
     dict[datetime, dict[FcasServiceName, FcasServicePoint]],
 ]:
+    prices_by_timestamp: dict[
+        datetime, Mapping[str, FcasRegionalServicePrice] | None
+    ] = {}
+    try:
+        materialized_prices = list(price_rows)
+    except TypeError as exc:
+        raise ValueError("invalid FCAS price rows") from exc
+    for price_row in materialized_prices:
+        if getattr(price_row, "region") != region:
+            raise ValueError("FCAS price region does not match generator")
+        timestamp = getattr(price_row, "interval_start")
+        prices = getattr(price_row, "fcas_prices")
+        if prices is not None and (not isinstance(prices, Mapping) or set(prices) != set(FCAS_SERVICES)):
+            raise ValueError("invalid FCAS price map")
+        if timestamp in prices_by_timestamp:
+            raise ValueError("duplicate FCAS price interval rows")
+        prices_by_timestamp[timestamp] = prices
+
     projected: dict[datetime, dict[FcasServiceName, FcasServicePoint]] = {}
     for row in rows:
         service_values = getattr(row, "services")
         if not isinstance(service_values, Mapping) or set(service_values) != set(FCAS_SERVICES):
             raise ValueError("invalid FCAS service map")
-        all_values: dict[str, FcasServicePoint] = {}
         for service in FCAS_SERVICES:
-            raw_value = _fcas_raw_field(service_values, service)
-            if raw_value is None:
+            if _fcas_raw_field(service_values, service) is None:
                 raise ValueError("invalid FCAS service value")
-            all_values[service] = _fcas_service_point(raw_value)
+        prices = prices_by_timestamp.get(getattr(row, "interval_start"))
         projected[getattr(row, "interval_start")] = {
-            service: all_values[service]
+            service: _fcas_service_point(
+                _fcas_raw_field(service_values, service),
+                None if prices is None else _fcas_number(
+                    prices[service].price_aud_per_mw_hour,
+                    "price_aud_per_mw_hour",
+                ),
+            )
             for service in selected_services
         }
 
@@ -323,11 +361,18 @@ def _fcas_projected_points(
     timestamp = _first_aligned_timestamp(requested_start)
     while timestamp < requested_end:
         values = projected.get(timestamp, {})
+        prices = prices_by_timestamp.get(timestamp)
         points.append(
             FcasPoint(
                 timestamp=timestamp,
                 services={
-                    service: values.get(service) or _fcas_service_point(None)
+                    service: values.get(service) or _fcas_service_point(
+                        None,
+                        None if prices is None else _fcas_number(
+                            prices[service].price_aud_per_mw_hour,
+                            "price_aud_per_mw_hour",
+                        ),
+                    )
                     for service in selected_services
                 },
             )
@@ -337,18 +382,19 @@ def _fcas_projected_points(
 
 
 def _fcas_service_summaries(
-    projected: Mapping[datetime, Mapping[FcasServiceName, FcasServicePoint]],
+    points: list[FcasPoint],
     selected_services: tuple[FcasServiceName, ...],
 ) -> dict[FcasServiceName, FcasServiceSummary]:
     summaries: dict[FcasServiceName, FcasServiceSummary] = {}
     for service in selected_services:
-        values = [point[service] for point in projected.values()]
+        values = [point.services[service] for point in points]
         targets = [point.target_mw for point in values if point.target_mw is not None]
         actual_availability = [
             point.actual_availability_mw
             for point in values
             if point.actual_availability_mw is not None
         ]
+        payments = [point.estimated_payment_aud for point in values if point.estimated_payment_aud is not None]
         summaries[service] = FcasServiceSummary(
             reported_intervals=sum(
                 point.target_mw is not None
@@ -356,6 +402,10 @@ def _fcas_service_summaries(
                 or point.actual_availability_mw is not None
                 for point in values
             ),
+            target_intervals=sum(point.target_mw is not None for point in values),
+            price_intervals=sum(point.price_aud_per_mw_hour is not None for point in values),
+            payment_intervals=len(payments),
+            estimated_payment_aud=sum(payments) if payments else None,
             enabled_intervals=sum(point.enabled for point in values),
             cleared_intervals=sum(point.cleared for point in values),
             participating_intervals=sum(point.participating for point in values),
@@ -367,6 +417,26 @@ def _fcas_service_summaries(
             ),
         )
     return summaries
+
+
+def _fcas_estimate(
+    points: list[FcasPoint], selected_services: tuple[FcasServiceName, ...]
+) -> FcasEstimateMetadata:
+    values = [point.services[service] for point in points for service in selected_services]
+    payments = [value.estimated_payment_aud for value in values if value.estimated_payment_aud is not None]
+    return FcasEstimateMetadata(
+        formula="estimated_payment_aud = target_mw × price_aud_per_mw_hour ÷ 12",
+        exclusions=(
+            "Excludes settlement adjustments, FPP, FCAS cost recovery, contracts, "
+            "fees, taxes, and verified physical response; finalized targets are not "
+            "verified physical response and Next Day publication may be delayed."
+        ),
+        estimated_payment_aud=sum(payments) if payments else None,
+        expected_service_intervals=len(values),
+        target_intervals=sum(value.target_mw is not None for value in values),
+        price_intervals=sum(value.price_aud_per_mw_hour is not None for value in values),
+        payment_intervals=len(payments),
+    )
 
 
 def _fcas_latest_finalized(rows: list[object]) -> FcasLatestFinalizedMetadata | None:
@@ -449,8 +519,13 @@ def _database_fcas(
                     requested_start,
                     requested_end,
                 )
+                price_rows = repository.list_prices(
+                    metadata.region, start=requested_start, end=requested_end
+                )
                 points, projected = _fcas_projected_points(
                     rows,
+                    price_rows,
+                    metadata.region,
                     selected_services,
                     requested_start,
                     requested_end,
@@ -481,10 +556,8 @@ def _database_fcas(
                         requested_end,
                         request.app.state.fcas_clock(),
                     ),
-                    service_summaries=_fcas_service_summaries(
-                        projected,
-                        selected_services,
-                    ),
+                    service_summaries=_fcas_service_summaries(points, selected_services),
+                    estimate=_fcas_estimate(points, selected_services),
                 )
     except Exception:
         raise HTTPException(status_code=503, detail="Database FCAS unavailable") from None

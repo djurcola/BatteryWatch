@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from io import StringIO
 from math import isfinite
 
-from .storage import RegionalPrice5m
+from .storage import FCAS_SERVICES, FcasRegionalServicePrice, RegionalPrice5m
 
 
 _REQUIRED_COLUMNS = {"SETTLEMENTDATE", "REGIONID", "RRP"}
@@ -170,6 +170,19 @@ _MMS_PRICE_HEADER = (
 )
 _MMS_REGIONS = frozenset(("NSW1", "QLD1", "SA1", "TAS1", "VIC1"))
 _MMS_PRICE_STATUSES = frozenset(("FIRM", "NOT FIRM"))
+_MMS_FCAS_FIELDS = {
+    "raise_1s": ("RAISE1SECRRP", "RAISE1SECAPCFLAG"),
+    "lower_1s": ("LOWER1SECRRP", "LOWER1SECAPCFLAG"),
+    "raise_6s": ("RAISE6SECRRP", "RAISE6SECAPCFLAG"),
+    "lower_6s": ("LOWER6SECRRP", "LOWER6SECAPCFLAG"),
+    "raise_60s": ("RAISE60SECRRP", "RAISE60SECAPCFLAG"),
+    "lower_60s": ("LOWER60SECRRP", "LOWER60SECAPCFLAG"),
+    "raise_5m": ("RAISE5MINRRP", "RAISE5MINAPCFLAG"),
+    "lower_5m": ("LOWER5MINRRP", "LOWER5MINAPCFLAG"),
+    "raise_reg": ("RAISEREGRRP", "RAISEREGAPCFLAG"),
+    "lower_reg": ("LOWERREGRRP", "LOWERREGAPCFLAG"),
+}
+assert tuple(_MMS_FCAS_FIELDS) == FCAS_SERVICES
 
 
 def _mms_timestamp(value: str, row_number: int, *, aligned: bool) -> datetime:
@@ -197,16 +210,29 @@ def _mms_control(value: str, name: str, row_number: int) -> int:
     return parsed
 
 
-def _mms_rrp(value: str, row_number: int) -> float | None:
+def _mms_rrp(value: str, row_number: int, name: str = "RRP") -> float | None:
     if not value.strip():
         return None
     try:
         parsed = float(value)
     except (TypeError, ValueError) as exc:
-        raise AemoParseError(f"row {row_number}: invalid RRP") from exc
+        raise AemoParseError(f"row {row_number}: invalid {name}") from exc
     if not isfinite(parsed):
-        raise AemoParseError(f"row {row_number}: invalid RRP")
+        raise AemoParseError(f"row {row_number}: invalid {name}")
     return parsed
+
+
+def _mms_fcas_prices(row: list[str], positions: dict[str, int], row_number: int) -> dict[str, FcasRegionalServicePrice]:
+    prices: dict[str, FcasRegionalServicePrice] = {}
+    for service, (rrp_name, apc_name) in _MMS_FCAS_FIELDS.items():
+        price = _mms_rrp(row[positions[rrp_name]], row_number, rrp_name)
+        if price is not None and price < 0:
+            raise AemoParseError(f"row {row_number}: invalid {rrp_name}")
+        prices[service] = FcasRegionalServicePrice(
+            price_aud_per_mw_hour=price,
+            apc_flag=_mms_control(row[positions[apc_name]], apc_name, row_number),
+        )
+    return prices
 
 
 def parse_dispatch_price_mms_csv(
@@ -309,6 +335,7 @@ def parse_dispatch_price_mms_csv(
         if status not in _MMS_PRICE_STATUSES:
             raise AemoParseError(f"row {row_number}: invalid PRICE_STATUS")
         price = _mms_rrp(row[header_positions["RRP"]], row_number)
+        fcas_prices = _mms_fcas_prices(row, header_positions, row_number)
         observed_at = source_timestamp or _mms_timestamp(
             row[header_positions["LASTCHANGED"]], row_number, aligned=False
         )
@@ -337,6 +364,7 @@ def parse_dispatch_price_mms_csv(
                 intervention=intervention,
                 apc_flag=apc_flag,
                 market_suspended=bool(suspended),
+                fcas_prices=fcas_prices,
             ))
         except (TypeError, ValueError) as exc:
             raise AemoParseError(f"row {row_number}: invalid PRICE fields") from exc

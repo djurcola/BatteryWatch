@@ -27,12 +27,13 @@ type Generator = { duid: string; site_name: string; region: string };
 type Point = { timestamp: string; power_mw: number | null; price_aud_per_mwh: number | null; net_energy_value_aud: number | null };
 type Series = { generator: Generator; points: Point[]; summary: { exported_energy_mwh: number; imported_energy_mwh: number; net_energy_value_aud: number }; coverage: { power_coverage_percent: number; price_coverage_percent: number; soc_coverage_percent: number }; estimate: { label: string; disclaimer: string } };
 type FcasServiceName = "raise_1s" | "lower_1s" | "raise_6s" | "lower_6s" | "raise_60s" | "lower_60s" | "raise_5m" | "lower_5m" | "raise_reg" | "lower_reg";
-type FcasServicePoint = { target_mw: number | null; enablement_status: number | null; actual_availability_mw: number | null; enabled: boolean; trapped: boolean; stranded: boolean; cleared: boolean; participating: boolean; response_verified: false };
+type FcasServicePoint = { target_mw: number | null; price_aud_per_mw_hour: number | null; estimated_payment_aud: number | null; enablement_status: number | null; actual_availability_mw: number | null; enabled: boolean; trapped: boolean; stranded: boolean; cleared: boolean; participating: boolean; response_verified: false };
 type FcasPoint = { timestamp: string; services: Record<FcasServiceName, FcasServicePoint> };
-type FcasSummary = { reported_intervals: number; enabled_intervals: number; cleared_intervals: number; participating_intervals: number; trapped_intervals: number; stranded_intervals: number; max_target_mw: number | null; max_actual_availability_mw: number | null };
-type Fcas = { selected_services: FcasServiceName[]; points: FcasPoint[]; coverage: { expected_intervals: number; observed_intervals: number; missing_intervals: number; coverage_percent: number }; latest_finalized: { interval_start: string; report_timestamp: string; downloaded_at: string; source_artifact_sha256: string; dispatch_interval: string; intervention: number; run_number: number } | null; publication_state: "available" | "partial" | "not_yet_public" | "no_data"; service_summaries: Partial<Record<FcasServiceName, FcasSummary>> };
+type FcasSummary = { reported_intervals: number; target_intervals: number; price_intervals: number; payment_intervals: number; estimated_payment_aud: number | null; enabled_intervals: number; cleared_intervals: number; participating_intervals: number; trapped_intervals: number; stranded_intervals: number; max_target_mw: number | null; max_actual_availability_mw: number | null };
+type FcasEstimate = { is_estimate: true; label: string; formula: string; payment_unit: "AUD"; price_unit: "AUD/MW/hour"; exclusions: string; estimated_payment_aud: number | null; expected_service_intervals: number; target_intervals: number; price_intervals: number; payment_intervals: number };
+type Fcas = { selected_services: FcasServiceName[]; points: FcasPoint[]; coverage: { expected_intervals: number; observed_intervals: number; missing_intervals: number; coverage_percent: number }; latest_finalized: { interval_start: string; report_timestamp: string; downloaded_at: string; source_artifact_sha256: string; dispatch_interval: string; intervention: number; run_number: number } | null; publication_state: "available" | "partial" | "not_yet_public" | "no_data"; service_summaries: Partial<Record<FcasServiceName, FcasSummary>>; estimate: FcasEstimate };
 type RangeOption = { value: RangePreset; label: string };
-type TooltipEntry = { name: string; axisValue?: string | number; seriesName?: string; value: unknown; marker?: string };
+type TooltipEntry = { name: string; axisValue?: string | number; seriesName?: string; value: unknown; marker?: string; dataIndex?: number };
 type DataZoomEvent = { start?: number; end?: number; startValue?: unknown; endValue?: unknown; batch?: DataZoomEvent[] };
 type BufferState = { points: Point[]; loadedStart: number; loadedEnd: number; generation: number };
 type AdjacentRequest = { controller: AbortController; generation: number };
@@ -40,6 +41,9 @@ type AdjacentRequest = { controller: AbortController; generation: number };
 type ChartInstance = ReturnType<typeof echarts.init>;
 
 function money(value: number) { return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", maximumFractionDigits: 2 }).format(value); }
+function fcasMoney(value: number | null) { return value == null || !Number.isFinite(value) ? "Unavailable" : money(value); }
+function fcasPrice(value: number | null) { return value == null || !Number.isFinite(value) ? "Unavailable" : `${value.toFixed(2)} AUD/MW/hour`; }
+function coverageCount(value: number, expected: number) { return expected === 0 ? "Unavailable" : `${value} of ${expected}`; }
 function number(value: number) { return `${value.toFixed(3)} MWh`; }
 function formatTimestamp(value: unknown) {
   const date = new Date(typeof value === "number" ? value : String(value ?? ""));
@@ -536,7 +540,24 @@ function App() {
     chart.setOption({
       animation: false,
       aria: { enabled: true },
-      tooltip: { trigger: "axis" },
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: "#132238",
+        borderColor: "rgba(255, 255, 255, 0.2)",
+        textStyle: { color: "#ffffff", fontWeight: "normal" },
+        formatter: (params: TooltipEntry | TooltipEntry[]) => {
+          const firstEntry = Array.isArray(params) ? params[0] : params;
+          const point = fcas.points[firstEntry?.dataIndex ?? -1];
+          if (!point) return "";
+          return [
+            `<strong>Timestamp: ${formatTimestamp(point.timestamp)}</strong>`,
+            ...fcas.selected_services.map((service) => {
+              const detail = point.services[service];
+              return `<span style="font-weight: normal"><strong>${fcasServiceLabel(service)}</strong>: target ${detail.target_mw == null ? "Unavailable" : `${detail.target_mw.toFixed(3)} MW`} · price ${fcasPrice(detail.price_aud_per_mw_hour)} · estimated payment ${fcasMoney(detail.estimated_payment_aud)}</span>`;
+            }),
+          ].join("<br/>");
+        },
+      },
       legend: { top: 8, textStyle: { color: "#ffffff" }, data: labels },
       grid: { left: 64, right: 18, top: 48, bottom: 58 },
       xAxis: { type: "time", axisLabel: { color: "#ffffff", fontSize: 11 } },
@@ -601,10 +622,16 @@ function App() {
       {!fcas && !fcasError && <p className="loading" role="status" aria-live="polite">Loading FCAS dispatch targets for the selected range…</p>}
       {fcas && <>
         <p className="fcas-disclaimer"><strong>AEMO finalized dispatch target — not verified physical response</strong></p>
-        <p className="fcas-coverage" role="status" aria-live="polite">{fcas.coverage.observed_intervals} of {fcas.coverage.expected_intervals} five-minute intervals reported · {fcas.coverage.coverage_percent.toFixed(0)}% coverage{fcas.latest_finalized ? ` · latest finalized ${formatTimestamp(fcas.latest_finalized.interval_start)}` : ""}</p>
+        <section className="fcas-estimate" aria-label="Estimated gross FCAS enablement payment">
+          <span>{fcas.estimate.label} ({rangeLabel(range.preset)})</span>
+          <strong>{fcasMoney(fcas.estimate.estimated_payment_aud)}</strong>
+          <small>{fcas.estimate.payment_unit}</small>
+        </section>
+        <p className="fcas-coverage" role="status" aria-live="polite">{fcas.coverage.observed_intervals} of {fcas.coverage.expected_intervals} five-minute intervals reported · {fcas.coverage.coverage_percent.toFixed(0)}% coverage · target {coverageCount(fcas.estimate.target_intervals, fcas.estimate.expected_service_intervals)} · price {coverageCount(fcas.estimate.price_intervals, fcas.estimate.expected_service_intervals)} · payment {coverageCount(fcas.estimate.payment_intervals, fcas.estimate.expected_service_intervals)} selected service-intervals{fcas.latest_finalized ? ` · latest finalized ${formatTimestamp(fcas.latest_finalized.interval_start)}` : ""}</p>
+        <p className="fcas-formula">Estimate formula: {fcas.estimate.formula}. Regional FCAS price is in {fcas.estimate.price_unit}. {fcas.estimate.exclusions}</p>
         {fcas.points.length > 0 && <div ref={fcasChartRef} className="fcas-chart" role="img" aria-label="FCAS target MW time series" />}
         <div className="fcas-summary-grid">
-          {fcas.selected_services.map((service) => { const summary = fcas.service_summaries[service]; return <article key={service}><h3>{fcasServiceLabel(service)}</h3>{summary ? <dl><div><dt>Reported</dt><dd>{summary.reported_intervals}</dd></div><div><dt>Enabled</dt><dd>{summary.enabled_intervals}</dd></div><div><dt>Cleared</dt><dd>{summary.cleared_intervals}</dd></div><div><dt>Participating</dt><dd>{summary.participating_intervals}</dd></div><div><dt>Trapped / stranded</dt><dd>{summary.trapped_intervals} / {summary.stranded_intervals}</dd></div><div><dt>Max target</dt><dd>{summary.max_target_mw == null ? "—" : `${summary.max_target_mw.toFixed(3)} MW`}</dd></div><div><dt>Max availability</dt><dd>{summary.max_actual_availability_mw == null ? "—" : `${summary.max_actual_availability_mw.toFixed(3)} MW`}</dd></div></dl> : <p>Summary unavailable.</p>}</article>; })}
+          {fcas.selected_services.map((service) => { const summary = fcas.service_summaries[service]; return <article key={service}><h3>{fcasServiceLabel(service)}</h3>{summary ? <dl><div><dt>Estimated payment</dt><dd>{fcasMoney(summary.estimated_payment_aud)}</dd></div><div><dt>Price / payment coverage</dt><dd>{coverageCount(summary.price_intervals, fcas.coverage.expected_intervals)} / {coverageCount(summary.payment_intervals, fcas.coverage.expected_intervals)}</dd></div><div><dt>Reported</dt><dd>{summary.reported_intervals}</dd></div><div><dt>Enabled</dt><dd>{summary.enabled_intervals}</dd></div><div><dt>Cleared</dt><dd>{summary.cleared_intervals}</dd></div><div><dt>Participating</dt><dd>{summary.participating_intervals}</dd></div><div><dt>Trapped / stranded</dt><dd>{summary.trapped_intervals} / {summary.stranded_intervals}</dd></div><div><dt>Max target</dt><dd>{summary.max_target_mw == null ? "—" : `${summary.max_target_mw.toFixed(3)} MW`}</dd></div><div><dt>Max availability</dt><dd>{summary.max_actual_availability_mw == null ? "—" : `${summary.max_actual_availability_mw.toFixed(3)} MW`}</dd></div></dl> : <p>Summary unavailable.</p>}</article>; })}
         </div>
       </>}
     </section>}

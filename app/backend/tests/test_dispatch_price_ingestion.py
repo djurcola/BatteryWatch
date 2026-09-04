@@ -10,7 +10,7 @@ from batterywatch_api.dispatch_price_ingestion import (
     DispatchPriceIngestionResult,
     PostgreSQLDispatchPriceIngestor,
 )
-from batterywatch_api.storage import RegionalPrice5m
+from batterywatch_api.storage import FCAS_SERVICES, FcasRegionalServicePrice, RegionalPrice5m
 
 
 UTC = timezone.utc
@@ -91,6 +91,10 @@ def prices() -> tuple[RegionalPrice5m, ...]:
             ingestion_version=int(ARTIFACT_ID),
             correction_version=0,
             quality_flags=(),
+            fcas_prices={
+                service: FcasRegionalServicePrice(float(index), 0)
+                for index, service in enumerate(FCAS_SERVICES)
+            },
         )
         for index, region in enumerate(REGIONS)
     )
@@ -136,7 +140,11 @@ class PostgreSQLDispatchPriceIngestorTests(unittest.TestCase):
         result = PostgreSQLDispatchPriceIngestor(connection).ingest(artifact, prices())
 
         self.assertEqual(result, DispatchPriceIngestionResult(0, True))
-        self.assertEqual(len(connection.executions), 2)
+        self.assertEqual(len(connection.executions), 7)
+        self.assertTrue(all(
+            "fcas_prices IS NULL" in statement
+            for statement, _ in connection.executions[2:]
+        ))
         self.assertEqual((connection.commits, connection.rollbacks), (1, 0))
 
     def test_alternate_official_source_url_replay_is_a_clean_noop(self) -> None:
@@ -228,6 +236,25 @@ class PostgreSQLDispatchPriceIngestorTests(unittest.TestCase):
 
 
 class DispatchPriceMigrationTests(unittest.TestCase):
+    def test_fcas_price_projection_migration_is_nullable_and_fail_closed(self) -> None:
+        app_root = Path(__file__).resolve().parents[2]
+        migration = (app_root / "migrations" / "013_fcas_regional_prices.sql").read_text(
+            encoding="utf-8"
+        )
+        migrate_script = (app_root / "deploy" / "migrate.sh").read_text(encoding="utf-8")
+        self.assertIn("ADD COLUMN IF NOT EXISTS fcas_prices JSONB", migration)
+        self.assertIn("dispatch_fcas_price_map_jsonb_valid", migration)
+        self.assertIn("jsonb_typeof", migration)
+        self.assertIn("NaN", migration)
+        self.assertIn("Infinity", migration)
+        self.assertTrue(migration.lstrip().startswith("BEGIN;"))
+        self.assertTrue(migration.rstrip().endswith("COMMIT;"))
+        self.assertIn("013_fcas_regional_prices.sql", migrate_script)
+        self.assertLess(
+            migrate_script.index("012_current_nextday_artifacts.sql"),
+            migrate_script.index("013_fcas_regional_prices.sql"),
+        )
+
     def test_backup_script_passes_connection_uri_explicitly_to_pg_dump(self) -> None:
         root = Path(__file__).resolve().parents[2]
         script = (root / "deploy" / "backup-verify.sh").read_text(encoding="utf-8")

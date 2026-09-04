@@ -59,6 +59,9 @@ def _mms_row(
     values[MMS_HEADER.index("MARKETSUSPENDEDFLAG")] = suspended
     values[MMS_HEADER.index("LASTCHANGED")] = "2026/08/30 12:00:11"
     values[MMS_HEADER.index("PRICE_STATUS")] = price_status
+    for column in MMS_HEADER:
+        if column.endswith("APCFLAG") and not values[MMS_HEADER.index(column)]:
+            values[MMS_HEADER.index(column)] = "0"
     return ",".join(values)
 
 
@@ -104,6 +107,74 @@ class AemoDispatchPriceParserTests(unittest.TestCase):
         ))
         self.assertEqual((records[0].intervention, records[0].apc_flag), (1, 1))
         self.assertFalse(records[0].market_suspended)
+
+    def test_mms_price_parser_maps_all_ten_unrounded_fcas_prices_and_apc_flags(self):
+        row = _mms_row("NSW1", "10")
+        values = row.split(",")
+        expected = {
+            "raise_1s": ("RAISE1SECRRP", "RAISE1SECAPCFLAG", "1", "11"),
+            "lower_1s": ("LOWER1SECRRP", "LOWER1SECAPCFLAG", "2", "12"),
+            "raise_6s": ("RAISE6SECRRP", "RAISE6SECAPCFLAG", "3", "13"),
+            "lower_6s": ("LOWER6SECRRP", "LOWER6SECAPCFLAG", "4", "14"),
+            "raise_60s": ("RAISE60SECRRP", "RAISE60SECAPCFLAG", "5", "15"),
+            "lower_60s": ("LOWER60SECRRP", "LOWER60SECAPCFLAG", "6", "16"),
+            "raise_5m": ("RAISE5MINRRP", "RAISE5MINAPCFLAG", "7", "17"),
+            "lower_5m": ("LOWER5MINRRP", "LOWER5MINAPCFLAG", "8", "18"),
+            "raise_reg": ("RAISEREGRRP", "RAISEREGAPCFLAG", "9", "19"),
+            "lower_reg": ("LOWERREGRRP", "LOWERREGAPCFLAG", "10", "20"),
+        }
+        for _, (rrp_column, apc_column, rrp, apc) in expected.items():
+            values[MMS_HEADER.index(rrp_column)] = rrp
+            values[MMS_HEADER.index(apc_column)] = apc
+        records = parse_dispatch_price_mms_csv(
+            _mms_payload(",".join(values), *[_mms_row(region, "10") for region in ("QLD1", "SA1", "TAS1", "VIC1")]),
+            source_id=MMS_SOURCE_ID,
+            ingestion_version=7,
+        )
+        actual = records[0].fcas_prices
+        self.assertIsNotNone(actual)
+        assert actual is not None
+        self.assertEqual(
+            {service: (value.price_aud_per_mw_hour, value.apc_flag) for service, value in actual.items()},
+            {service: (float(rrp), int(apc)) for service, (_, _, rrp, apc) in expected.items()},
+        )
+
+    def test_mms_price_parser_preserves_zero_and_null_fcas_prices(self):
+        values = _mms_row("NSW1", "10").split(",")
+        values[MMS_HEADER.index("RAISE1SECRRP")] = "0"
+        values[MMS_HEADER.index("LOWER1SECRRP")] = ""
+        records = parse_dispatch_price_mms_csv(
+            _mms_payload(",".join(values), *[_mms_row(region, "10") for region in ("QLD1", "SA1", "TAS1", "VIC1")]),
+            source_id=MMS_SOURCE_ID,
+            ingestion_version=7,
+        )
+        prices = records[0].fcas_prices
+        self.assertIsNotNone(prices)
+        assert prices is not None
+        self.assertEqual(prices["raise_1s"].price_aud_per_mw_hour, 0.0)
+        self.assertIsNone(prices["lower_1s"].price_aud_per_mw_hour)
+
+    def test_mms_price_parser_rejects_invalid_fcas_prices_and_apc_flags(self):
+        invalid_values = (
+            ("RAISE1SECRRP", "-1"),
+            ("RAISE1SECRRP", "nan"),
+            ("RAISE1SECAPCFLAG", "-1"),
+            ("RAISE1SECAPCFLAG", "1.5"),
+        )
+        for column, value in invalid_values:
+            with self.subTest(column=column, value=value):
+                values = _mms_row("NSW1", "10").split(",")
+                values[MMS_HEADER.index(column)] = value
+                payload = _mms_payload(
+                    ",".join(values),
+                    *[_mms_row(region, "10") for region in ("QLD1", "SA1", "TAS1", "VIC1")],
+                )
+                with self.assertRaises(AemoParseError):
+                    parse_dispatch_price_mms_csv(
+                        payload,
+                        source_id=MMS_SOURCE_ID,
+                        ingestion_version=7,
+                    )
 
     def test_mms_price_parser_accepts_documented_non_firm_status(self):
         payload = _mms_payload(

@@ -205,6 +205,10 @@ class PostgreSQLRepositoryWriteTests(unittest.TestCase):
         self.assertIn("intervention = EXCLUDED.intervention", statement)
         self.assertIn("apc_flag = EXCLUDED.apc_flag", statement)
         self.assertIn("market_suspended = EXCLUDED.market_suspended", statement)
+        self.assertIn(
+            "fcas_prices = COALESCE(EXCLUDED.fcas_prices, nem_price_5m.fcas_prices)",
+            statement,
+        )
         self.assertEqual(
             parameters,
             (
@@ -220,6 +224,7 @@ class PostgreSQLRepositoryWriteTests(unittest.TestCase):
                 1,
                 0,
                 ["unavailable"],
+                None,
             ),
         )
 
@@ -279,7 +284,7 @@ class PostgreSQLRepositoryReadTests(unittest.TestCase):
                 ],
                 [("BAT-1", INTERVAL, Decimal("0.0"), "nem-dispatch", SOURCE_TIME, 1, 0)],
                 [("BAT-1", INTERVAL, None, "battery-telemetry", SOURCE_TIME, 1, 0, ["unavailable"])],
-                [("NSW1", INTERVAL, Decimal("0.0"), "available", 0, 0, False, "nem-rrp", SOURCE_TIME, 1, 0, [])],
+                [("NSW1", INTERVAL, Decimal("0.0"), "available", 0, 0, False, "nem-rrp", SOURCE_TIME, 1, 0, [], None)],
             )
         )
         repository = PostgreSQLRepository(connection)
@@ -318,6 +323,7 @@ class PostgreSQLRepositoryReadTests(unittest.TestCase):
             1,
             0,
             [],
+            None,
         )
         connection = FakeConnection(responses=([row], [row]))
         repository = PostgreSQLRepository(connection)

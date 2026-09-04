@@ -132,6 +132,8 @@ FcasPublicationState = Literal["available", "partial", "not_yet_public", "no_dat
 
 class FcasServicePoint(ApiModel):
     target_mw: float | None
+    price_aud_per_mw_hour: float | None = Field(default=None, ge=0)
+    estimated_payment_aud: float | None
     enablement_status: int | None
     actual_availability_mw: float | None
     enabled: bool
@@ -174,6 +176,10 @@ class FcasLatestFinalizedMetadata(ApiModel):
 
 class FcasServiceSummary(ApiModel):
     reported_intervals: int = Field(ge=0)
+    target_intervals: int = Field(ge=0)
+    price_intervals: int = Field(ge=0)
+    payment_intervals: int = Field(ge=0)
+    estimated_payment_aud: float | None
     enabled_intervals: int = Field(ge=0)
     cleared_intervals: int = Field(ge=0)
     participating_intervals: int = Field(ge=0)
@@ -181,6 +187,20 @@ class FcasServiceSummary(ApiModel):
     stranded_intervals: int = Field(ge=0)
     max_target_mw: float | None = Field(default=None, ge=0)
     max_actual_availability_mw: float | None = Field(default=None, ge=0)
+
+
+class FcasEstimateMetadata(ApiModel):
+    is_estimate: Literal[True] = True
+    label: Literal["Estimated gross FCAS enablement payment"] = "Estimated gross FCAS enablement payment"
+    formula: str
+    payment_unit: Literal["AUD"] = "AUD"
+    price_unit: Literal["AUD/MW/hour"] = "AUD/MW/hour"
+    exclusions: str
+    estimated_payment_aud: float | None
+    expected_service_intervals: int = Field(ge=0)
+    target_intervals: int = Field(ge=0)
+    price_intervals: int = Field(ge=0)
+    payment_intervals: int = Field(ge=0)
 
 
 class FcasResponse(ApiModel):
@@ -193,6 +213,7 @@ class FcasResponse(ApiModel):
     latest_finalized: FcasLatestFinalizedMetadata | None
     publication_state: FcasPublicationState
     service_summaries: dict[FcasServiceName, FcasServiceSummary]
+    estimate: FcasEstimateMetadata
 
     @field_serializer("requested_start", "requested_end")
     def serialize_bounds(self, value: datetime) -> str:

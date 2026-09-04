@@ -269,6 +269,39 @@ class GeneratorSoc5m(_VersionedRecord):
         return "available" if self.is_available else "missing"
 
 
+FCAS_SERVICES = (
+    "raise_1s", "lower_1s", "raise_6s", "lower_6s", "raise_60s",
+    "lower_60s", "raise_5m", "lower_5m", "raise_reg", "lower_reg",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class FcasRegionalServicePrice:
+    """One unrounded regional FCAS price and its APC quality flag."""
+
+    price_aud_per_mw_hour: float | None
+    apc_flag: int
+
+    def __post_init__(self) -> None:
+        price = _optional_number(self.price_aud_per_mw_hour, "price_aud_per_mw_hour")
+        if price is not None and price < 0:
+            raise ValueError("price_aud_per_mw_hour must be non-negative")
+        object.__setattr__(self, "price_aud_per_mw_hour", price)
+        object.__setattr__(self, "apc_flag", _version(self.apc_flag, "apc_flag"))
+
+
+def _fcas_price_map(
+    value: Mapping[str, FcasRegionalServicePrice] | None,
+) -> Mapping[str, FcasRegionalServicePrice] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or set(value) != set(FCAS_SERVICES):
+        raise ValueError("fcas_prices must contain the canonical FCAS services")
+    if any(not isinstance(value[service], FcasRegionalServicePrice) for service in FCAS_SERVICES):
+        raise ValueError("fcas_prices must contain typed FCAS prices")
+    return MappingProxyType({service: value[service] for service in FCAS_SERVICES})
+
+
 @dataclass(frozen=True, slots=True)
 class RegionalPrice5m(_VersionedRecord):
     """Five-minute regional price with explicit missing/negative status and flags."""
@@ -285,6 +318,7 @@ class RegionalPrice5m(_VersionedRecord):
     intervention: int = 0
     apc_flag: int = 0
     market_suspended: bool = False
+    fcas_prices: Mapping[str, FcasRegionalServicePrice] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "region", _text(self.region, "region"))
@@ -311,6 +345,7 @@ class RegionalPrice5m(_VersionedRecord):
         object.__setattr__(self, "apc_flag", _version(self.apc_flag, "apc_flag"))
         if not isinstance(self.market_suspended, bool):
             raise ValueError("market_suspended must be a boolean")
+        object.__setattr__(self, "fcas_prices", _fcas_price_map(self.fcas_prices))
 
     @property
     def logical_key(self) -> tuple[str, datetime]:
@@ -337,18 +372,6 @@ class RegionalPrice5m(_VersionedRecord):
         return self.price_aud_per_mwh is not None and self.price_aud_per_mwh < 0
 
 
-FCAS_SERVICES = (
-    "raise_1s",
-    "lower_1s",
-    "raise_6s",
-    "lower_6s",
-    "raise_60s",
-    "lower_60s",
-    "raise_5m",
-    "lower_5m",
-    "raise_reg",
-    "lower_reg",
-)
 FCAS_CLEARANCE_EPSILON_MW = 0.000001
 _VALID_FCAS_STATUS_FLAGS = frozenset((0, 1, 2, 3, 4))
 
@@ -831,34 +854,22 @@ RETURNING 1
 
 _PRICE_UPSERT_SQL = """
 INSERT INTO nem_price_5m (
-    region,
-    interval_start,
-    price_aud_per_mwh,
-    price_status,
-    intervention,
-    apc_flag,
-    market_suspended,
-    source_id,
-    source_timestamp,
-    ingestion_version,
-    correction_version,
-    quality_flags
+    region, interval_start, price_aud_per_mwh, price_status, intervention,
+    apc_flag, market_suspended, source_id, source_timestamp, ingestion_version,
+    correction_version, quality_flags, fcas_prices
 )
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
 ON CONFLICT (region, interval_start) DO UPDATE
 SET price_aud_per_mwh = EXCLUDED.price_aud_per_mwh,
-    price_status = EXCLUDED.price_status,
-    intervention = EXCLUDED.intervention,
-    apc_flag = EXCLUDED.apc_flag,
-    market_suspended = EXCLUDED.market_suspended,
-    source_id = EXCLUDED.source_id,
-    source_timestamp = EXCLUDED.source_timestamp,
+    price_status = EXCLUDED.price_status, intervention = EXCLUDED.intervention,
+    apc_flag = EXCLUDED.apc_flag, market_suspended = EXCLUDED.market_suspended,
+    source_id = EXCLUDED.source_id, source_timestamp = EXCLUDED.source_timestamp,
     ingestion_version = EXCLUDED.ingestion_version,
     correction_version = EXCLUDED.correction_version,
-    quality_flags = EXCLUDED.quality_flags
+    quality_flags = EXCLUDED.quality_flags,
+    fcas_prices = COALESCE(EXCLUDED.fcas_prices, nem_price_5m.fcas_prices)
 WHERE (EXCLUDED.correction_version, EXCLUDED.ingestion_version, EXCLUDED.source_timestamp)
-    > (nem_price_5m.correction_version,
-       nem_price_5m.ingestion_version,
+    > (nem_price_5m.correction_version, nem_price_5m.ingestion_version,
        nem_price_5m.source_timestamp)
 RETURNING 1
 """
@@ -896,7 +907,7 @@ WHERE generator_id = %s AND interval_start = %s
 _PRICE_READ_SQL = """
 SELECT region, interval_start, price_aud_per_mwh, price_status,
        intervention, apc_flag, market_suspended, source_id, source_timestamp,
-       ingestion_version, correction_version, quality_flags
+       ingestion_version, correction_version, quality_flags, fcas_prices
 FROM nem_price_5m
 WHERE region = %s AND interval_start = %s
 """
@@ -936,7 +947,7 @@ ORDER BY interval_start ASC
 _PRICE_LIST_SQL = """
 SELECT region, interval_start, price_aud_per_mwh, price_status,
        intervention, apc_flag, market_suspended, source_id, source_timestamp,
-       ingestion_version, correction_version, quality_flags
+       ingestion_version, correction_version, quality_flags, fcas_prices
 FROM nem_price_5m
 WHERE region = %s
   AND (%s::timestamptz IS NULL OR interval_start >= %s::timestamptz)
@@ -986,6 +997,36 @@ def _soc_from_row(row: tuple[Any, ...]) -> GeneratorSoc5m:
     )
 
 
+def _fcas_prices_to_value(value: Mapping[str, FcasRegionalServicePrice] | None) -> str | None:
+    if value is None:
+        return None
+    return json.dumps(
+        {service: {"price_aud_per_mw_hour": value[service].price_aud_per_mw_hour, "apc_flag": value[service].apc_flag} for service in FCAS_SERVICES},
+        sort_keys=True, separators=(",", ":"), allow_nan=False,
+    )
+
+
+def _fcas_prices_from_value(value: Any) -> Mapping[str, FcasRegionalServicePrice] | None:
+    if value is None:
+        return None
+    if hasattr(value, "obj"):
+        value = value.obj
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid stored FCAS price map") from exc
+    if not isinstance(value, Mapping) or set(value) != set(FCAS_SERVICES):
+        raise ValueError("invalid stored FCAS price map")
+    result: dict[str, FcasRegionalServicePrice] = {}
+    for service in FCAS_SERVICES:
+        raw = value[service]
+        if not isinstance(raw, Mapping) or set(raw) != {"price_aud_per_mw_hour", "apc_flag"}:
+            raise ValueError("invalid stored FCAS price value")
+        result[service] = FcasRegionalServicePrice(raw["price_aud_per_mw_hour"], raw["apc_flag"])
+    return result
+
+
 def _price_from_row(row: tuple[Any, ...]) -> RegionalPrice5m:
     return RegionalPrice5m(
         region=row[0],
@@ -1000,6 +1041,7 @@ def _price_from_row(row: tuple[Any, ...]) -> RegionalPrice5m:
         ingestion_version=row[9],
         correction_version=row[10],
         quality_flags=tuple(row[11] or ()),
+        fcas_prices=_fcas_prices_from_value(row[12]),
     )
 
 
@@ -1157,6 +1199,7 @@ class PostgreSQLRepository:
                 record.ingestion_version,
                 record.correction_version,
                 list(record.quality_flags),
+                _fcas_prices_to_value(record.fcas_prices),
             ),
         )
 
@@ -1280,6 +1323,7 @@ __all__ = [
     "GeneratorPower5m",
     "GeneratorSoc5m",
     "FcasService5m",
+    "FcasRegionalServicePrice",
     "GeneratorFcas5m",
     "FCAS_SERVICES",
     "FCAS_CLEARANCE_EPSILON_MW",

@@ -5,6 +5,37 @@ import { test } from "node:test";
 const source = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 
+test("FCAS panel renders the API total estimate without browser-side arithmetic", () => {
+  assert.match(source, /label: string; formula: string; payment_unit: "AUD"/);
+  assert.match(source, /expected_service_intervals: number/);
+  assert.match(source, /fcas\.estimate\.label/);
+  assert.match(source, /fcas\.estimate\.estimated_payment_aud/);
+  assert.doesNotMatch(source, /target_mw\s*\*\s*.*price_aud_per_mw_hour/);
+});
+
+test("FCAS estimates distinguish unavailable from a true zero and show coverage", () => {
+  assert.match(source, /function fcasMoney\(value: number \| null\) \{ return value == null \|\| !Number\.isFinite\(value\) \? "Unavailable" : money\(value\); \}/);
+  assert.match(source, /estimated_payment_aud: number \| null/);
+  assert.match(source, /target \{coverageCount\(fcas\.estimate\.target_intervals, fcas\.estimate\.expected_service_intervals\)\}/);
+  assert.match(source, /price \{coverageCount\(fcas\.estimate\.price_intervals, fcas\.estimate\.expected_service_intervals\)\}/);
+  assert.match(source, /payment \{coverageCount\(fcas\.estimate\.payment_intervals, fcas\.estimate\.expected_service_intervals\)\} selected service-intervals/);
+});
+
+test("FCAS service cards and tooltip show API price and payment details", () => {
+  assert.match(source, /<dt>Estimated payment<\/dt>/);
+  assert.match(source, /<dt>Price \/ payment coverage<\/dt>/);
+  assert.match(source, /price_aud_per_mw_hour/);
+  assert.match(source, /estimated payment \$\{fcasMoney\(detail\.estimated_payment_aud\)\}/);
+  assert.match(source, /tooltip: \{[\s\S]*?formatter:/);
+});
+
+test("FCAS estimate language includes the formula, latency, and exclusions", () => {
+  assert.match(source, /Estimate formula: \{fcas\.estimate\.formula\}/);
+  assert.doesNotMatch(source, /Estimate formula: target MW × regional FCAS price ÷ 12/);
+  assert.doesNotMatch(source, /Publication may be delayed/);
+  assert.match(source, /fcas\.estimate\.exclusions/);
+});
+
 test("FCAS panel uses the exact physical-response disclaimer", () => {
   assert.match(
     source,
