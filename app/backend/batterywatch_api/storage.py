@@ -143,6 +143,19 @@ class GeneratorMetadata(_VersionedRecord):
     correction_version: int = 0
     data_start: datetime | None = None
     data_end: datetime | None = None
+    asset_type: str | None = None
+    owner_name: str | None = None
+    technology_type: str | None = None
+    fuel_type: str | None = None
+    unit_status: str | None = None
+    commercial_use_date: str | None = None
+    battery_manufacturer: str | None = None
+    battery_model: str | None = None
+    inverter_manufacturer: str | None = None
+    inverter_model: str | None = None
+    dispatch_type: str | None = None
+    status_bucket_summary: str | None = None
+    fuel_bucket_summary: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "generator_id", _text(self.generator_id, "generator_id"))
@@ -779,12 +792,25 @@ INSERT INTO generators (
     storage_capacity_mwh,
     data_start,
     data_end,
+    asset_type,
+    owner_name,
+    technology_type,
+    fuel_type,
+    unit_status,
+    commercial_use_date,
+    battery_manufacturer,
+    battery_model,
+    inverter_manufacturer,
+    inverter_model,
+    dispatch_type,
+    status_bucket_summary,
+    fuel_bucket_summary,
     source_id,
     source_timestamp,
     ingestion_version,
     correction_version
 )
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (generator_id) DO UPDATE
 SET site_name = EXCLUDED.site_name,
     region = EXCLUDED.region,
@@ -792,6 +818,19 @@ SET site_name = EXCLUDED.site_name,
     storage_capacity_mwh = EXCLUDED.storage_capacity_mwh,
     data_start = EXCLUDED.data_start,
     data_end = EXCLUDED.data_end,
+    asset_type = COALESCE(EXCLUDED.asset_type, generators.asset_type),
+    owner_name = COALESCE(EXCLUDED.owner_name, generators.owner_name),
+    technology_type = COALESCE(EXCLUDED.technology_type, generators.technology_type),
+    fuel_type = COALESCE(EXCLUDED.fuel_type, generators.fuel_type),
+    unit_status = COALESCE(EXCLUDED.unit_status, generators.unit_status),
+    commercial_use_date = COALESCE(EXCLUDED.commercial_use_date, generators.commercial_use_date),
+    battery_manufacturer = COALESCE(EXCLUDED.battery_manufacturer, generators.battery_manufacturer),
+    battery_model = COALESCE(EXCLUDED.battery_model, generators.battery_model),
+    inverter_manufacturer = COALESCE(EXCLUDED.inverter_manufacturer, generators.inverter_manufacturer),
+    inverter_model = COALESCE(EXCLUDED.inverter_model, generators.inverter_model),
+    dispatch_type = COALESCE(EXCLUDED.dispatch_type, generators.dispatch_type),
+    status_bucket_summary = COALESCE(EXCLUDED.status_bucket_summary, generators.status_bucket_summary),
+    fuel_bucket_summary = COALESCE(EXCLUDED.fuel_bucket_summary, generators.fuel_bucket_summary),
     source_id = EXCLUDED.source_id,
     source_timestamp = EXCLUDED.source_timestamp,
     ingestion_version = EXCLUDED.ingestion_version,
@@ -876,6 +915,10 @@ RETURNING 1
 
 _GENERATOR_READ_SQL = """
 SELECT generator_id, site_name, region, capacity_mw, storage_capacity_mwh,
+       asset_type, owner_name, technology_type, fuel_type, unit_status,
+       commercial_use_date, battery_manufacturer, battery_model,
+       inverter_manufacturer, inverter_model, dispatch_type,
+       status_bucket_summary, fuel_bucket_summary,
        source_id, source_timestamp, ingestion_version, correction_version,
        data_start, data_end
 FROM generators
@@ -884,6 +927,10 @@ WHERE generator_id = %s
 
 _GENERATORS_LIST_SQL = """
 SELECT generator_id, site_name, region, capacity_mw, storage_capacity_mwh,
+       asset_type, owner_name, technology_type, fuel_type, unit_status,
+       commercial_use_date, battery_manufacturer, battery_model,
+       inverter_manufacturer, inverter_model, dispatch_type,
+       status_bucket_summary, fuel_bucket_summary,
        source_id, source_timestamp, ingestion_version, correction_version,
        data_start, data_end
 FROM generators
@@ -963,12 +1010,25 @@ def _generator_from_row(row: tuple[Any, ...]) -> GeneratorMetadata:
         region=row[2],
         capacity_mw=row[3],
         storage_capacity_mwh=row[4],
-        source_id=row[5],
-        source_timestamp=row[6],
-        ingestion_version=row[7],
-        correction_version=row[8],
-        data_start=row[9],
-        data_end=row[10],
+        asset_type=row[5],
+        owner_name=row[6],
+        technology_type=row[7],
+        fuel_type=row[8],
+        unit_status=row[9],
+        commercial_use_date=row[10],
+        battery_manufacturer=row[11],
+        battery_model=row[12],
+        inverter_manufacturer=row[13],
+        inverter_model=row[14],
+        dispatch_type=row[15],
+        status_bucket_summary=row[16],
+        fuel_bucket_summary=row[17],
+        source_id=row[18],
+        source_timestamp=row[19],
+        ingestion_version=row[20],
+        correction_version=row[21],
+        data_start=row[22],
+        data_end=row[23],
     )
 
 
@@ -1141,6 +1201,19 @@ class PostgreSQLRepository:
                 record.storage_capacity_mwh,
                 record.data_start,
                 record.data_end,
+                record.asset_type,
+                record.owner_name,
+                record.technology_type,
+                record.fuel_type,
+                record.unit_status,
+                record.commercial_use_date,
+                record.battery_manufacturer,
+                record.battery_model,
+                record.inverter_manufacturer,
+                record.inverter_model,
+                record.dispatch_type,
+                record.status_bucket_summary,
+                record.fuel_bucket_summary,
                 record.source_id,
                 record.source_timestamp,
                 record.ingestion_version,

@@ -24,6 +24,19 @@ class GeneratorMetadata(TypedDict):
     region: str
     capacity_mw: float
     storage_capacity_mwh: float
+    asset_type: None
+    owner: None
+    technology_type: None
+    fuel_type: None
+    unit_status: None
+    commercial_use_date: None
+    battery_manufacturer: None
+    battery_model: None
+    inverter_manufacturer: None
+    inverter_model: None
+    dispatch_type: None
+    status_bucket_summary: None
+    fuel_bucket_summary: None
     data_start: datetime
     data_end: datetime
     data_status: Literal["fixture"]
@@ -43,6 +56,19 @@ def generator_metadata() -> GeneratorMetadata:
         "region": FIXTURE_REGION,
         "capacity_mw": 2.0,
         "storage_capacity_mwh": 4.0,
+        "asset_type": None,
+        "owner": None,
+        "technology_type": None,
+        "fuel_type": None,
+        "unit_status": None,
+        "commercial_use_date": None,
+        "battery_manufacturer": None,
+        "battery_model": None,
+        "inverter_manufacturer": None,
+        "inverter_model": None,
+        "dispatch_type": None,
+        "status_bucket_summary": None,
+        "fuel_bucket_summary": None,
         "data_start": START,
         "data_end": START + len(_POWER) * INTERVAL,
         "data_status": "fixture",

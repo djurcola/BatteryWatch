@@ -20,6 +20,19 @@ class Generator(ApiModel):
     region: str
     capacity_mw: float = Field(gt=0)
     storage_capacity_mwh: float = Field(gt=0)
+    asset_type: str | None = None
+    owner: str | None = None
+    technology_type: str | None = None
+    fuel_type: str | None = None
+    unit_status: str | None = None
+    commercial_use_date: str | None = None
+    battery_manufacturer: str | None = None
+    battery_model: str | None = None
+    inverter_manufacturer: str | None = None
+    inverter_model: str | None = None
+    dispatch_type: str | None = None
+    status_bucket_summary: str | None = None
+    fuel_bucket_summary: str | None = None
     data_start: datetime | None
     data_end: datetime | None
     data_status: Literal["fixture", "database"] = "fixture"

@@ -23,7 +23,7 @@ import {
   type RangePreset,
 } from "./history-range.mjs";
 
-type Generator = { duid: string; site_name: string; region: string };
+type Generator = { duid: string; site_name: string; region: string; capacity_mw: number; storage_capacity_mwh: number; asset_type: string | null; owner: string | null; technology_type: string | null; fuel_type: string | null; unit_status: string | null; commercial_use_date: string | null; battery_manufacturer: string | null; battery_model: string | null; inverter_manufacturer: string | null; inverter_model: string | null; dispatch_type: string | null; status_bucket_summary: string | null; fuel_bucket_summary: string | null };
 type Point = { timestamp: string; power_mw: number | null; price_aud_per_mwh: number | null; net_energy_value_aud: number | null };
 type Series = { generator: Generator; points: Point[]; summary: { exported_energy_mwh: number; imported_energy_mwh: number; net_energy_value_aud: number }; coverage: { power_coverage_percent: number; price_coverage_percent: number; soc_coverage_percent: number }; estimate: { label: string; disclaimer: string } };
 type FcasServiceName = "raise_1s" | "lower_1s" | "raise_6s" | "lower_6s" | "raise_60s" | "lower_60s" | "raise_5m" | "lower_5m" | "raise_reg" | "lower_reg";
@@ -45,6 +45,8 @@ function fcasMoney(value: number | null) { return value == null || !Number.isFin
 function fcasPrice(value: number | null) { return value == null || !Number.isFinite(value) ? "Unavailable" : `${value.toFixed(2)} AUD/MW/hour`; }
 function coverageCount(value: number, expected: number) { return expected === 0 ? "Unavailable" : `${value} of ${expected}`; }
 function number(value: number) { return `${value.toFixed(3)} MWh`; }
+function generatorInformationValue(value: string | number | null | undefined) { return value == null || (typeof value === "string" && value.trim() === "") ? "Not available" : String(value); }
+function generatorCapacity(value: number | null | undefined, unit: string) { return value == null || !Number.isFinite(value) ? "Not available" : `${new Intl.NumberFormat("en-AU", { maximumFractionDigits: 3 }).format(value)} ${unit}`; }
 function formatTimestamp(value: unknown) {
   const date = new Date(typeof value === "number" ? value : String(value ?? ""));
   if (Number.isNaN(date.getTime())) return String(value ?? "");
@@ -580,6 +582,8 @@ function App() {
     return () => { window.removeEventListener("resize", resize); mobileQuery.removeEventListener("change", mediaChange); chart.dispose(); };
   }, [fcas, range.preset]);
 
+  const selectedGenerator = generators.find((generator) => generator.duid === selected);
+
   return <main>
     <header><div><p className="eyebrow">STANDALONE BATTERY ANALYTICS</p><h1>BatteryWatch</h1><p className="lede">Five-minute battery power, regional price overlays, and transparent energy estimates.</p></div><label>Generator<select value={selected} onChange={(event) => setSelected(event.target.value)}>{generators.map((g) => <option key={g.duid} value={g.duid}>{g.site_name} · {g.duid} · {g.region}</option>)}</select></label></header>
     <nav className="range-controls" aria-label="History range controls">
@@ -634,6 +638,29 @@ function App() {
           {fcas.selected_services.map((service) => { const summary = fcas.service_summaries[service]; return <article key={service}><h3>{fcasServiceLabel(service)}</h3>{summary ? <dl><div><dt>Estimated payment</dt><dd>{fcasMoney(summary.estimated_payment_aud)}</dd></div><div><dt>Price / payment coverage</dt><dd>{coverageCount(summary.price_intervals, fcas.coverage.expected_intervals)} / {coverageCount(summary.payment_intervals, fcas.coverage.expected_intervals)}</dd></div><div><dt>Reported</dt><dd>{summary.reported_intervals}</dd></div><div><dt>Enabled</dt><dd>{summary.enabled_intervals}</dd></div><div><dt>Cleared</dt><dd>{summary.cleared_intervals}</dd></div><div><dt>Participating</dt><dd>{summary.participating_intervals}</dd></div><div><dt>Trapped / stranded</dt><dd>{summary.trapped_intervals} / {summary.stranded_intervals}</dd></div><div><dt>Max target</dt><dd>{summary.max_target_mw == null ? "—" : `${summary.max_target_mw.toFixed(3)} MW`}</dd></div><div><dt>Max availability</dt><dd>{summary.max_actual_availability_mw == null ? "—" : `${summary.max_actual_availability_mw.toFixed(3)} MW`}</dd></div></dl> : <p>Summary unavailable.</p>}</article>; })}
         </div>
       </>}
+    </section>}
+    {selectedGenerator && <section className="generator-information panel" aria-labelledby="generator-information-heading">
+      <h2 id="generator-information-heading">Generator information</h2>
+      <dl>
+        <div><dt>Region</dt><dd>{generatorInformationValue(selectedGenerator.region)}</dd></div>
+        <div><dt>Asset Type</dt><dd>{generatorInformationValue(selectedGenerator.asset_type)}</dd></div>
+        <div><dt>Site Name</dt><dd>{generatorInformationValue(selectedGenerator.site_name)}</dd></div>
+        <div><dt>Owner</dt><dd>{generatorInformationValue(selectedGenerator.owner)}</dd></div>
+        <div><dt>Technology Type</dt><dd>{generatorInformationValue(selectedGenerator.technology_type)}</dd></div>
+        <div><dt>Fuel Type</dt><dd>{generatorInformationValue(selectedGenerator.fuel_type)}</dd></div>
+        <div><dt>DUID</dt><dd>{generatorInformationValue(selectedGenerator.duid)}</dd></div>
+        <div><dt>Status</dt><dd>{generatorInformationValue(selectedGenerator.unit_status)}</dd></div>
+        <div><dt>Nameplate Capacity (MW)</dt><dd>{generatorCapacity(selectedGenerator.capacity_mw, "MW")}</dd></div>
+        <div><dt>Storage Capacity (MWh)</dt><dd>{generatorCapacity(selectedGenerator.storage_capacity_mwh, "MWh")}</dd></div>
+        <div><dt>Commercial Use Date</dt><dd>{generatorInformationValue(selectedGenerator.commercial_use_date)}</dd></div>
+        <div><dt>Battery Manufacturer</dt><dd>{generatorInformationValue(selectedGenerator.battery_manufacturer)}</dd></div>
+        <div><dt>Battery Model</dt><dd>{generatorInformationValue(selectedGenerator.battery_model)}</dd></div>
+        <div><dt>Inverter Manufacturer</dt><dd>{generatorInformationValue(selectedGenerator.inverter_manufacturer)}</dd></div>
+        <div><dt>Inverter Model</dt><dd>{generatorInformationValue(selectedGenerator.inverter_model)}</dd></div>
+        <div><dt>Dispatch Type</dt><dd>{generatorInformationValue(selectedGenerator.dispatch_type)}</dd></div>
+        <div><dt>Status Bucket Summary</dt><dd>{generatorInformationValue(selectedGenerator.status_bucket_summary)}</dd></div>
+        <div><dt>Fuel Bucket Summary</dt><dd>{generatorInformationValue(selectedGenerator.fuel_bucket_summary)}</dd></div>
+      </dl>
     </section>}
   </main>;
 }
