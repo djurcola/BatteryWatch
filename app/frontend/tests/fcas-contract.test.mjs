@@ -74,11 +74,12 @@ test("FCAS selected-range lifecycle stays separate from endless energy paging", 
   assert.match(source, /fetchSeries\(currentGenerator, chunk\.start, chunk\.end, controller\.signal\)/);
 });
 
-test("FCAS service details default to expanded and contain only the service-card grid", () => {
+test("FCAS service details default to collapsed and contain only the service-card grid", () => {
   const chart = source.indexOf('ref={fcasChartRef}');
-  const details = source.indexOf('<details className="fcas-details" open>');
+  const details = source.indexOf('<details className="fcas-details">');
   const grid = source.indexOf('<div className="fcas-summary-grid">');
   assert.ok(chart >= 0 && details > chart && grid > details);
+  assert.doesNotMatch(source, /<details className="fcas-details" open>/);
   assert.match(source.slice(details, grid), /<summary>FCAS service details<\/summary>/);
   assert.match(source.slice(grid, source.indexOf('</details>', grid)), /fcas\.selected_services\.map/);
   assert.match(styles, /\.fcas-details summary::before/);
@@ -87,7 +88,7 @@ test("FCAS service details default to expanded and contain only the service-card
 });
 
 test("FCAS graph, estimate context, and formula remain outside the collapsible details", () => {
-  const details = source.indexOf('<details className="fcas-details" open>');
+  const details = source.indexOf('<details className="fcas-details">');
   for (const content of ['fcas-disclaimer', 'fcas-estimate', 'fcas-coverage', 'fcas-formula', 'ref={fcasChartRef}']) {
     assert.ok(source.indexOf(content) >= 0 && source.indexOf(content) < details, `${content} must precede the details control`);
   }
