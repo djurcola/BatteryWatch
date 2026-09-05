@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 const source = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
 
 test("FCAS panel renders the API total estimate without browser-side arithmetic", () => {
   assert.match(source, /label: string; formula: string; payment_unit: "AUD"/);
@@ -73,11 +74,33 @@ test("FCAS selected-range lifecycle stays separate from endless energy paging", 
   assert.match(source, /fetchSeries\(currentGenerator, chunk\.start, chunk\.end, controller\.signal\)/);
 });
 
-test("FCAS target chart and service summaries remain visible in the panel", () => {
+test("FCAS service details default to expanded and contain only the service-card grid", () => {
+  const chart = source.indexOf('ref={fcasChartRef}');
+  const details = source.indexOf('<details className="fcas-details" open>');
+  const grid = source.indexOf('<div className="fcas-summary-grid">');
+  assert.ok(chart >= 0 && details > chart && grid > details);
+  assert.match(source.slice(details, grid), /<summary>FCAS service details<\/summary>/);
+  assert.match(source.slice(grid, source.indexOf('</details>', grid)), /fcas\.selected_services\.map/);
+  assert.match(styles, /\.fcas-details summary::before/);
+  assert.match(styles, /\.fcas-details\[open\] summary::before/);
+  assert.match(styles, /\.fcas-details summary:focus-visible/);
+});
+
+test("FCAS graph, estimate context, and formula remain outside the collapsible details", () => {
+  const details = source.indexOf('<details className="fcas-details" open>');
+  for (const content of ['fcas-disclaimer', 'fcas-estimate', 'fcas-coverage', 'fcas-formula', 'ref={fcasChartRef}']) {
+    assert.ok(source.indexOf(content) >= 0 && source.indexOf(content) < details, `${content} must precede the details control`);
+  }
+});
+
+test("the local battery favicon is declared as SVG data", () => {
+  assert.match(html, /<link rel="icon" href="data:image\/svg\+xml,/);
+  assert.match(html, /%F0%9F%94%8B/);
+});
+
+test("FCAS target chart and service summaries remain in the panel", () => {
   assert.match(source, /echarts\.init\(fcasChartRef\.current\)/);
   assert.match(source, /target_mw/);
-  assert.match(source, /fcas\.selected_services\.map/);
-  assert.match(source, /fcas-summary-grid/);
   assert.match(source, /fcas-state-\$\{fcas\.publication_state\}/);
 });
 
