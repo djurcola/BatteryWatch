@@ -77,6 +77,32 @@ class HistoricalBackfillResult:
         return sum(result.percentage_count for result in self.nextday_results)
 
     @property
+    def nextday_fcas_raw_inserted_count(self) -> int:
+        return sum(result.fcas_raw_inserted for result in self.nextday_results)
+
+    @property
+    def nextday_fcas_raw_replayed_count(self) -> int:
+        return sum(result.fcas_raw_replayed for result in self.nextday_results)
+
+    @property
+    def nextday_fcas_effective_candidate_count(self) -> int:
+        return sum(result.fcas_effective_candidates for result in self.nextday_results)
+
+    @property
+    def nextday_fcas_effective_applied_count(self) -> int:
+        return sum(result.fcas_effective_applied for result in self.nextday_results)
+
+    @property
+    def nextday_fcas_effective_replayed_count(self) -> int:
+        return sum(result.fcas_effective_replayed for result in self.nextday_results)
+
+    @property
+    def nextday_fcas_reported_service_count(self) -> int:
+        return sum(
+            result.fcas_reported_service_count for result in self.nextday_results
+        )
+
+    @property
     def replayed_interval_count(self) -> int:
         return sum(result.replayed_interval_count for result in self.scada_results) + sum(
             result.replayed_interval_count for result in self.price_results
@@ -172,7 +198,7 @@ def run_historical_backfill(
                     claim,
                     spec.requested_start,
                     spec.requested_end,
-                    spec.ingestion_version,
+                    ingestion_version=spec.ingestion_version,
                 )
             )
         else:

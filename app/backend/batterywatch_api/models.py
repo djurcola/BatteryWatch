@@ -113,3 +113,87 @@ class SeriesResponse(ApiModel):
     @field_serializer("requested_start", "requested_end")
     def serialize_bounds(self, value: datetime) -> str:
         return utc_iso(value)
+
+
+FcasServiceName = Literal[
+    "raise_1s",
+    "lower_1s",
+    "raise_6s",
+    "lower_6s",
+    "raise_60s",
+    "lower_60s",
+    "raise_5m",
+    "lower_5m",
+    "raise_reg",
+    "lower_reg",
+]
+FcasPublicationState = Literal["available", "partial", "not_yet_public", "no_data"]
+
+
+class FcasServicePoint(ApiModel):
+    target_mw: float | None
+    enablement_status: int | None
+    actual_availability_mw: float | None
+    enabled: bool
+    trapped: bool
+    stranded: bool
+    cleared: bool
+    participating: bool
+    response_verified: Literal[False] = False
+
+
+class FcasPoint(ApiModel):
+    timestamp: datetime
+    services: dict[FcasServiceName, FcasServicePoint]
+
+    @field_serializer("timestamp")
+    def serialize_timestamp(self, value: datetime) -> str:
+        return utc_iso(value)
+
+
+class FcasCoverage(ApiModel):
+    expected_intervals: int = Field(ge=0)
+    observed_intervals: int = Field(ge=0)
+    missing_intervals: int = Field(ge=0)
+    coverage_percent: float = Field(ge=0, le=100)
+
+
+class FcasLatestFinalizedMetadata(ApiModel):
+    interval_start: datetime
+    report_timestamp: datetime
+    downloaded_at: datetime
+    source_artifact_sha256: str
+    dispatch_interval: str
+    intervention: int
+    run_number: int
+
+    @field_serializer("interval_start", "report_timestamp", "downloaded_at")
+    def serialize_timestamp(self, value: datetime) -> str:
+        return utc_iso(value)
+
+
+class FcasServiceSummary(ApiModel):
+    reported_intervals: int = Field(ge=0)
+    enabled_intervals: int = Field(ge=0)
+    cleared_intervals: int = Field(ge=0)
+    participating_intervals: int = Field(ge=0)
+    trapped_intervals: int = Field(ge=0)
+    stranded_intervals: int = Field(ge=0)
+    max_target_mw: float | None = Field(default=None, ge=0)
+    max_actual_availability_mw: float | None = Field(default=None, ge=0)
+
+
+class FcasResponse(ApiModel):
+    generator: Generator
+    requested_start: datetime
+    requested_end: datetime
+    selected_services: list[FcasServiceName]
+    points: list[FcasPoint]
+    coverage: FcasCoverage
+    latest_finalized: FcasLatestFinalizedMetadata | None
+    publication_state: FcasPublicationState
+    service_summaries: dict[FcasServiceName, FcasServiceSummary]
+
+    @field_serializer("requested_start", "requested_end")
+    def serialize_bounds(self, value: datetime) -> str:
+        return utc_iso(value)

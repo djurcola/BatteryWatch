@@ -87,8 +87,8 @@ class BackfillLedgerMigrationTests(unittest.TestCase):
             self.assertIn(f"'{table}'", migrate_script)
 
         self.assertIn("004_historical_backfill_ledger.sql", migrate_script)
-        self.assertIn("SELECT count(*) = 13", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertIn("SELECT count(*) = 15", migrate_script)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
         self.assertIn("ON DELETE RESTRICT", migration)
         self.assertIn("event_seq BIGSERIAL PRIMARY KEY", migration)
         self.assertIn("historical_backfill_items_claim_idx", migration)
@@ -246,6 +246,10 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
                 claim.attempt_number,
             ),
         )
+        self.assertIn(
+            "jsonb_build_object('error_summary', %s::text)",
+            connection.executions[2][0],
+        )
         self.assertEqual(
             connection.executions[2][1],
             (
@@ -308,6 +312,10 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
         self.assertEqual(
             connection.executions[1][1],
             (claim.run_id, claim.feed, claim.report_date, claim.attempt_number),
+        )
+        self.assertIn(
+            "jsonb_build_object('records_imported', %s::bigint)",
+            connection.executions[2][0],
         )
         self.assertEqual(
             connection.executions[2][1],

@@ -35,6 +35,7 @@ class NestedSourceArtifactReceipt:
 class NestedSourceArtifactResult:
     artifact_sha256: str
     byte_count: int
+    downloaded_at: datetime
     replayed: bool
 
 
@@ -165,6 +166,7 @@ class PostgreSQLNestedSourceArtifactRegistrar:
             receipt.outer_source_url,
             None,
         )
+        canonical_downloaded_at = receipt.downloaded_at
         try:
             with _managed_cursor(self._connection) as cursor:
                 cursor.execute(
@@ -208,16 +210,24 @@ class PostgreSQLNestedSourceArtifactRegistrar:
                         receipt.raw_bytes,
                         receipt.parent_artifact_sha256,
                         receipt.artifact_published_at,
-                        receipt.downloaded_at,
                         receipt.publication_id,
                     )
-                    normalized = (*stored[:5], bytes(stored[5]), *stored[6:])
+                    normalized = (
+                        *stored[:5],
+                        bytes(stored[5]),
+                        stored[6],
+                        stored[7],
+                        stored[9],
+                    )
                     if normalized != expected:
                         raise NestedSourceArtifactConflictError(
                             "conflicting nested source artifact"
                         )
+                    canonical_downloaded_at = stored[8]
             self._connection.commit()
-            return NestedSourceArtifactResult(digest, byte_count, not inserted)
+            return NestedSourceArtifactResult(
+                digest, byte_count, canonical_downloaded_at, not inserted
+            )
         except Exception:
             try:
                 self._connection.rollback()
