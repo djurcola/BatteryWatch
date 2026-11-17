@@ -4,14 +4,17 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
+import json
 from math import isfinite
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
-from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from .fixtures import FIXTURE_DUID, INTERVAL, fixture_points, generator_metadata
 from .runtime import (
@@ -40,6 +43,7 @@ from .models import (
     SeriesPoint,
     SeriesResponse,
     SeriesSummary,
+    utc_iso,
 )
 from .storage import (
     FCAS_CLEARANCE_EPSILON_MW,
@@ -58,6 +62,33 @@ def _utc(value: datetime, field: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise HTTPException(status_code=400, detail=f"{field} must include a UTC offset")
     return value.astimezone(timezone.utc)
+
+
+CACHE_MAX_AGE_FINALIZED_SECONDS = 3600
+CACHE_MAX_AGE_LIVE_SECONDS = 30
+FINALIZED_GRACE = timedelta(hours=1)
+
+
+def _cache_max_age(request: Request, end: datetime) -> int:
+    """Immutable history can be cached hard; the live window revalidates quickly."""
+    clock = request.app.state.fcas_clock()
+    if end <= clock - FINALIZED_GRACE:
+        return CACHE_MAX_AGE_FINALIZED_SECONDS
+    return CACHE_MAX_AGE_LIVE_SECONDS
+
+
+def _cached_json_response(request: Request, body: dict[str, Any], max_age: int) -> Response:
+    """Serialize once, tag it, and let the client skip identical downloads."""
+    raw = json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    etag = f'"{hashlib.sha1(raw).hexdigest()}"'
+    headers = {
+        "Cache-Control": f"private, max-age={max_age}",
+        "ETag": etag,
+        "Vary": "Accept-Encoding",
+    }
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(content=raw, media_type="application/json", headers=headers)
 
 
 def _point(raw) -> SeriesPoint:
@@ -814,10 +845,32 @@ def fcas(
     start: str | None = None,
     end: str | None = None,
     services: str | None = None,
-) -> FcasResponse:
+    fields: Literal["full", "target"] = "full",
+) -> Response:
     if request.app.state.data_mode != "database":
         raise HTTPException(status_code=503, detail="Database FCAS unavailable")
-    return _database_fcas(request, generator, start, end, services)
+    result = _database_fcas(request, generator, start, end, services)
+    if fields == "target":
+        body = result.model_dump(mode="json", exclude={"points"})
+        body["points"] = [
+            {
+                "timestamp": utc_iso(point.timestamp),
+                "services": {
+                    name: [
+                        value.target_mw,
+                        value.price_aud_per_mw_hour,
+                        value.estimated_payment_aud,
+                    ]
+                    for name, value in point.services.items()
+                },
+            }
+            for point in result.points
+        ]
+    else:
+        body = result.model_dump(mode="json")
+    return _cached_json_response(
+        request, body, _cache_max_age(request, result.requested_end)
+    )
 
 
 @router.get("/api/series", response_model=SeriesResponse)
@@ -828,7 +881,12 @@ def series(
     end: str | None = None,
 ) -> SeriesResponse:
     if request.app.state.data_mode == "database":
-        return _database_series(request, generator, start, end)
+        result = _database_series(request, generator, start, end)
+        return _cached_json_response(
+            request,
+            result.model_dump(mode="json"),
+            _cache_max_age(request, result.requested_end),
+        )
     _ensure_fixture_runtime(request)
     if generator != FIXTURE_DUID:
         raise HTTPException(status_code=404, detail="Unknown generator")
@@ -882,6 +940,7 @@ def create_app(
         allow_methods=["GET"],
         allow_headers=["*"],
     )
+    application.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
     configured_url = configured_database_url(database_url) if selected_mode == "database" else None
     application.state.data_mode = selected_mode
     application.state.database_url = configured_url

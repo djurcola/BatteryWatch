@@ -27,8 +27,8 @@ type Generator = { duid: string; site_name: string; region: string; capacity_mw:
 type Point = { timestamp: string; power_mw: number | null; price_aud_per_mwh: number | null; net_energy_value_aud: number | null };
 type Series = { generator: Generator; points: Point[]; summary: { exported_energy_mwh: number; imported_energy_mwh: number; net_energy_value_aud: number }; coverage: { power_coverage_percent: number; price_coverage_percent: number; soc_coverage_percent: number }; estimate: { label: string; disclaimer: string } };
 type FcasServiceName = "raise_1s" | "lower_1s" | "raise_6s" | "lower_6s" | "raise_60s" | "lower_60s" | "raise_5m" | "lower_5m" | "raise_reg" | "lower_reg";
-type FcasServicePoint = { target_mw: number | null; price_aud_per_mw_hour: number | null; estimated_payment_aud: number | null; enablement_status: number | null; actual_availability_mw: number | null; enabled: boolean; trapped: boolean; stranded: boolean; cleared: boolean; participating: boolean; response_verified: false };
-type FcasPoint = { timestamp: string; services: Record<FcasServiceName, FcasServicePoint> };
+type FcasServiceCompact = [target_mw: number | null, price_aud_per_mw_hour: number | null, estimated_payment_aud: number | null];
+type FcasPoint = { timestamp: string; services: Partial<Record<FcasServiceName, FcasServiceCompact>> };
 type FcasSummary = { reported_intervals: number; target_intervals: number; price_intervals: number; payment_intervals: number; estimated_payment_aud: number | null; enabled_intervals: number; cleared_intervals: number; participating_intervals: number; trapped_intervals: number; stranded_intervals: number; max_target_mw: number | null; max_actual_availability_mw: number | null };
 type FcasEstimate = { is_estimate: true; label: string; formula: string; payment_unit: "AUD"; price_unit: "AUD/MW/hour"; exclusions: string; estimated_payment_aud: number | null; expected_service_intervals: number; target_intervals: number; price_intervals: number; payment_intervals: number };
 type Fcas = { selected_services: FcasServiceName[]; points: FcasPoint[]; coverage: { expected_intervals: number; observed_intervals: number; missing_intervals: number; coverage_percent: number }; latest_finalized: { interval_start: string; report_timestamp: string; downloaded_at: string; source_artifact_sha256: string; dispatch_interval: string; intervention: number; run_number: number } | null; publication_state: "available" | "partial" | "not_yet_public" | "no_data"; service_summaries: Partial<Record<FcasServiceName, FcasSummary>>; estimate: FcasEstimate };
@@ -287,7 +287,7 @@ function App() {
     let obsolete = false;
     setFcas(null);
     setFcasError("");
-    const query = new URLSearchParams({ generator: selected, start: range.start, end: range.end });
+    const query = new URLSearchParams({ generator: selected, start: range.start, end: range.end, fields: "target" });
     fetch(`/api/fcas?${query.toString()}`, { signal: controller.signal })
       .then(async (r) => { if (!r.ok) throw new Error(); return r.json(); })
       .then((body) => { if (!obsolete) setFcas(body); })
@@ -554,8 +554,8 @@ function App() {
           return [
             `<strong>Timestamp: ${formatTimestamp(point.timestamp)}</strong>`,
             ...fcas.selected_services.map((service) => {
-              const detail = point.services[service];
-              return `<span style="font-weight: normal"><strong>${fcasServiceLabel(service)}</strong>: target ${detail.target_mw == null ? "Unavailable" : `${detail.target_mw.toFixed(3)} MW`} · price ${fcasPrice(detail.price_aud_per_mw_hour)} · estimated payment ${fcasMoney(detail.estimated_payment_aud)}</span>`;
+              const [targetMw, pricePerMwh, estimatedPayment] = point.services[service] ?? [null, null, null];
+              return `<span style="font-weight: normal"><strong>${fcasServiceLabel(service)}</strong>: target ${targetMw == null ? "Unavailable" : `${targetMw.toFixed(3)} MW`} · price ${fcasPrice(pricePerMwh)} · estimated payment ${fcasMoney(estimatedPayment)}</span>`;
             }),
           ].join("<br/>");
         },
@@ -571,7 +571,7 @@ function App() {
         symbol: "circle",
         symbolSize: 6,
         connectNulls: false,
-        data: fcas.points.map((point) => [point.timestamp, point.services[service]?.target_mw ?? null]),
+        data: fcas.points.map((point) => [point.timestamp, point.services[service]?.[0] ?? null]),
       })),
     });
     applyResponsiveLayout();

@@ -26,7 +26,7 @@ test("FCAS service cards and tooltip show API price and payment details", () => 
   assert.match(source, /<dt>Estimated payment<\/dt>/);
   assert.match(source, /<dt>Price \/ payment coverage<\/dt>/);
   assert.match(source, /price_aud_per_mw_hour/);
-  assert.match(source, /estimated payment \$\{fcasMoney\(detail\.estimated_payment_aud\)\}/);
+  assert.match(source, /estimated payment \$\{fcasMoney\(estimatedPayment\)\}/);
   assert.match(source, /tooltip: \{[\s\S]*?formatter:/);
 });
 
@@ -49,6 +49,7 @@ test("FCAS requests use selected bounds and abort obsolete responses", () => {
   assert.match(source, /new AbortController\(\)/);
   assert.match(source, /start: range\.start/);
   assert.match(source, /end: range\.end/);
+  assert.match(source, /fields: "target"/);
   assert.match(source, /signal/);
   assert.match(source, /let obsolete = false/);
   assert.match(source, /if \(!obsolete\)/);
