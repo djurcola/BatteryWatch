@@ -5,6 +5,11 @@ all canonical CURRENT Dispatch SCADA and DispatchIS references, reconciles them
 in the durable per-file ledger, and processes a bounded fair oldest/newest
 claim batch independently for each feed; it is not a latest-only poll.
 
+New battery DUIDs are not automatically admitted. See
+[`../docs/generator-onboarding.md`](../docs/generator-onboarding.md) for the
+reviewed-registry boundary, unknown-DUID behavior, onboarding procedure, and
+historical-data implications.
+
 ## Daily Next Day CURRENT slice
 
 The separate `batterywatch-nextday.timer` runs the one-shot
