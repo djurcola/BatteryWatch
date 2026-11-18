@@ -4,6 +4,8 @@
 
 Use this repository for the deployed BatteryWatch successor: a React/TypeScript frontend, FastAPI backend, PostgreSQL/TimescaleDB storage, and NEMWeb collectors/backfills. More specific guidance under `app/` overrides this file.
 
+`app/` is the only actively developed code. The root `index.html` and `BatteryData.json` are the **archived original** static app (tag `legacy-static-app`, served at `https://batterywatch.danjurcola.com/`); do not develop, fix, or update them. The active product is `https://batterywatch.flow.danjurcola.com/`.
+
 ## Start here
 
 1. Run `git status --short --branch`, `git worktree list`, and `git log -5 --oneline` before editing. Unknown or unrelated dirty state is a stop condition.
