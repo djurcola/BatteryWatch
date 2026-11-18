@@ -1,10 +1,60 @@
 """Contract tests for the immutable historical source-artifact schema."""
 
 from pathlib import Path
+import os
+import subprocess
+import tempfile
 import unittest
 
 
 class HistoricalArtifactMigrationTests(unittest.TestCase):
+    def test_migration_fails_when_table_verification_returns_false(self) -> None:
+        app_root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            backup_path = temporary_path / "backup.dump"
+            manifest_path = temporary_path / "backup.sha256"
+            backup_path.write_bytes(b"test backup")
+            checksum = subprocess.run(
+                ["sha256sum", str(backup_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            manifest_path.write_text(checksum.stdout, encoding="utf-8")
+
+            fake_psql = temporary_path / "psql"
+            fake_psql.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$*\" == *\"--tuples-only\"* ]]; then\n"
+                "  printf 'f\\n'\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            fake_psql.chmod(0o755)
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "BATTERYWATCH_DATABASE_URL": "postgresql://test",
+                    "BATTERYWATCH_BACKUP_MANIFEST": str(manifest_path),
+                    "PATH": f"{temporary_directory}:{environment['PATH']}",
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(app_root / "deploy" / "migrate.sh")],
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_current_artifact_ledger_migration_is_present(self) -> None:
+        app_root = Path(__file__).resolve().parents[2]
+        migration_path = app_root / "migrations" / "009_current_artifact_ledger.sql"
+        self.assertTrue(migration_path.exists(), "CURRENT ledger migration is missing")
+
     def test_migration_defines_immutable_artifacts_and_deploys_last(self) -> None:
         app_root = Path(__file__).resolve().parents[2]
         migration = (app_root / "migrations" / "005_historical_source_artifacts.sql").read_text(
@@ -46,10 +96,10 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
 
         self.assertIn("004_historical_backfill_ledger.sql", migrate_script)
         self.assertIn("005_historical_source_artifacts.sql", migrate_script)
-        self.assertIn("SELECT count(*) = 13", migrate_script)
+        self.assertIn("SELECT count(*) = 14", migrate_script)
         for table in ("historical_source_artifacts", "historical_backfill_item_artifacts"):
             self.assertIn(f"'{table}'", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
 
         upper = migration.upper()
         for forbidden in ("DROP ", "ALTER ", "TRUNCATE "):
@@ -88,7 +138,7 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         ):
             self.assertIn(f"'{event_type}'", migration)
         self.assertIn("006_artifact_recorded_event.sql", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
         self.assertNotIn("TRUNCATE ", upper)
         self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
 
@@ -115,7 +165,7 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
         self.assertIn("historical_backfill_events_details_check", migration)
         self.assertIn("jsonb_typeof(details) = 'object'", migration)
         self.assertIn("007_backfill_runtime_details.sql", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
         self.assertNotIn("TRUNCATE ", upper)
         self.assertNotRegex(upper, r"\bDELETE\s+FROM\b")
 
@@ -214,9 +264,9 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
             migrate_script.index("007_backfill_runtime_details.sql"),
             migrate_script.index("008_authoritative_soc.sql"),
         )
-        self.assertIn("SELECT count(*) = 13", migrate_script)
+        self.assertIn("SELECT count(*) = 14", migrate_script)
         self.assertIn("'raw_nextday_soc_observations'", migrate_script)
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
         for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
             self.assertNotIn(forbidden, upper)
 
@@ -246,7 +296,7 @@ class HistoricalArtifactMigrationTests(unittest.TestCase):
             migrate_script.index("008_authoritative_soc.sql"),
             migrate_script.index("009_allow_archive_urls.sql"),
         )
-        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 10)
+        self.assertEqual(migrate_script.count('--dbname="$database_url"'), 11)
         for forbidden in ("DROP TABLE", "DROP COLUMN", "TRUNCATE ", "DELETE FROM"):
             self.assertNotIn(forbidden, upper)
 

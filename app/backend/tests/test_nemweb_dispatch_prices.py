@@ -154,6 +154,37 @@ class NemwebDispatchPriceAdapterTests(unittest.TestCase):
                 with self.assertRaises(source.NemwebDispatchPriceError):
                     source.extract_dispatch_price_zip(reference, payload)
 
+    def test_collects_each_current_price_artifact_in_order(self) -> None:
+        older_filename = "PUBLIC_DISPATCHIS_202608301200_0000000535164869.zip"
+        older_url = INDEX_URL + older_filename
+        index_html = f'<a href="{older_filename}">older</a><a href="{FILENAME}">newer</a>'
+        calls: list[str] = []
+
+        def fetch(url: str, *, max_bytes: int) -> NemwebHttpResource:
+            del max_bytes
+            calls.append(url)
+            return _resource(url, index_html.encode() if url == INDEX_URL else b"zip")
+
+        def extracted(reference, payload):
+            self.assertEqual(payload, b"zip")
+            return source.DispatchPriceArtifact(
+                reference, "member.CSV", "csv", "a" * 64, b"zip"
+            )
+
+        with patch.object(source, "extract_dispatch_price_zip", side_effect=extracted):
+            with patch.object(source, "parse_dispatch_price_mms_csv", return_value=()):
+                result = source.collect_current_dispatch_prices(
+                    ingestion_version=7,
+                    correction_version=2,
+                    fetch=fetch,
+                )
+
+        self.assertEqual(
+            tuple(item.artifact.reference.zip_filename for item in result),
+            (older_filename, FILENAME),
+        )
+        self.assertEqual(calls, [INDEX_URL, older_url, ARTIFACT_URL])
+
 
 if __name__ == "__main__":
     unittest.main()

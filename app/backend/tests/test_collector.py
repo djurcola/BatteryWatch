@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from io import BytesIO
 import unittest
+from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from batterywatch_api.collector import (
@@ -12,6 +13,7 @@ from batterywatch_api.collector import (
     DISPATCH_SCADA_INDEX_MAX_BYTES,
     DISPATCH_SCADA_INDEX_URL,
     DispatchScadaCollection,
+    collect_current_dispatch_scada,
     collect_latest_dispatch_scada,
 )
 from batterywatch_api.nemweb_dispatch_scada import (
@@ -145,6 +147,40 @@ C,END OF REPORT,5
         )
 
         self.assertEqual((result, tuple(fetch.calls)), expected)
+
+    def test_collects_each_canonical_current_artifact(self) -> None:
+        older_filename = "PUBLIC_DISPATCHSCADA_202608291200_0000000000000001.zip"
+        older_url = DISPATCH_SCADA_INDEX_URL + older_filename
+        index_html = f'<a href="{older_filename}">older</a><a href="{NEWER_FILENAME}">newer</a>'
+        older_zip, _ = _make_zip(older_filename, "C,valid\\n")
+        newer_zip, _ = _make_zip(NEWER_FILENAME, "C,valid\\n")
+        fetch = FakeFetch(
+            resources={
+                DISPATCH_SCADA_INDEX_URL: _make_resource(
+                    DISPATCH_SCADA_INDEX_URL,
+                    index_html.encode("utf-8"),
+                    "text/html; charset=utf-8",
+                ),
+                older_url: _make_resource(older_url, older_zip, "application/zip"),
+                NEWER_URL: _make_resource(NEWER_URL, newer_zip, "application/zip"),
+            }
+        )
+
+        with patch("batterywatch_api.collector.parse_dispatch_scada_csv", return_value=()):
+            result = collect_current_dispatch_scada(
+                ingestion_version=7,
+                correction_version=2,
+                fetch=fetch,
+            )
+
+        self.assertEqual(
+            tuple(item.artifact.reference.zip_filename for item in result),
+            (older_filename, NEWER_FILENAME),
+        )
+        self.assertEqual(
+            tuple(url for url, _limit in fetch.calls),
+            (DISPATCH_SCADA_INDEX_URL, older_url, NEWER_URL),
+        )
 
 
 if __name__ == "__main__":
