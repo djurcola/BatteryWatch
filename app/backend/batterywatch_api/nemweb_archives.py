@@ -39,6 +39,7 @@ MAX_OUTER_COMPRESSED_BYTES: Final = 128 * 1024 * 1024
 MAX_OUTER_UNCOMPRESSED_BYTES: Final = 512 * 1024 * 1024
 MAX_NESTED_ARCHIVE_BYTES: Final = 16 * 1024 * 1024
 MAX_NESTED_COMPRESSION_RATIO: Final = 100
+MAX_NESTED_RECURSION_DEPTH: Final = 3
 MAX_DAILY_INTERVALS: Final = 288
 
 _UTC: Final = timezone.utc
@@ -92,6 +93,21 @@ class NemwebNestedArchiveArtifact:
 class NemwebArchiveExtraction:
     outer: NemwebOuterArchiveArtifact
     nested: tuple[NemwebNestedArchiveArtifact, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class NestedArchiveNode:
+    name: str
+    path: str
+    payload: bytes
+    sha256: str
+    children: tuple[NestedArchiveNode, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class NestedArchiveTree:
+    sha256: str
+    members: tuple[NestedArchiveNode, ...]
 
 
 def _utc(value: datetime, name: str) -> datetime:
@@ -375,14 +391,85 @@ def extract_nested_archive(
     return NemwebArchiveExtraction(outer, result)
 
 
+def _tree_member_name(name: str) -> None:
+    if type(name) is not str or not name or "/" in name or "\\" in name or "\x00" in name:
+        raise NemwebArchiveError("invalid nested archive member name")
+
+
+def _walk_archive_tree(
+    payload: bytes,
+    parent_path: str,
+    depth: int,
+    max_depth: int,
+    totals: list[int],
+) -> tuple[NestedArchiveNode, ...]:
+    try:
+        with ZipFile(BytesIO(payload)) as archive:
+            members = archive.infolist()
+            if not members or len(members) > MAX_DAILY_INTERVALS:
+                raise NemwebArchiveError("invalid nested archive member count")
+            if len({member.filename for member in members}) != len(members):
+                raise NemwebArchiveError("duplicate nested archive member")
+            specs: list[tuple[str, ZipInfo]] = []
+            for member in members:
+                _tree_member_name(member.filename)
+                compressed_size, file_size = _member_sizes(member)
+                totals[0] += compressed_size
+                totals[1] += file_size
+                if (totals[0] > MAX_OUTER_COMPRESSED_BYTES
+                        or totals[1] > MAX_OUTER_UNCOMPRESSED_BYTES
+                        or totals[1] > totals[0] * MAX_NESTED_COMPRESSION_RATIO):
+                    raise NemwebArchiveError("nested archive resource limits exceeded")
+                specs.append((member.filename, member))
+            nodes: list[NestedArchiveNode] = []
+            for name, member in sorted(specs, key=lambda spec: spec[0]):
+                member_payload = _read_nested_member(archive, member)
+                path = name if not parent_path else f"{parent_path}/{name}"
+                if name.endswith(".zip"):
+                    if depth + 1 > max_depth:
+                        raise NemwebArchiveError("nested archive depth limit exceeded")
+                    children = _walk_archive_tree(
+                        member_payload, path, depth + 1, max_depth, totals,
+                    )
+                else:
+                    children = ()
+                nodes.append(NestedArchiveNode(
+                    name, path, member_payload,
+                    sha256(member_payload).hexdigest(), children,
+                ))
+    except NemwebArchiveError:
+        raise
+    except _FORMAT_ERRORS as error:
+        raise NemwebArchiveError("invalid nested archive") from error
+    return tuple(nodes)
+
+
+def extract_nested_archive_tree(
+    payload: bytes,
+    *,
+    max_depth: int | None = None,
+) -> NestedArchiveTree:
+    """Recursively extract nested ZIP archives in memory with bounded depth."""
+    if type(payload) is not bytes or not payload or len(payload) > MAX_OUTER_ARCHIVE_BYTES:
+        raise NemwebArchiveError("invalid nested archive payload")
+    limit = MAX_NESTED_RECURSION_DEPTH if max_depth is None else max_depth
+    if type(limit) is not int or not 1 <= limit <= MAX_NESTED_RECURSION_DEPTH:
+        raise NemwebArchiveError("invalid nested archive depth limit")
+    members = _walk_archive_tree(payload, "", 0, limit, [0, 0])
+    return NestedArchiveTree(sha256(payload).hexdigest(), members)
+
+
 __all__ = [
     "ARCHIVE_SOURCE", "ArchivePlanItem", "ArchiveRangePlan", "CURRENT_INDEX_SOURCE",
     "DISPATCHIS_PRICE_ARCHIVE_BASE_URL", "DISPATCHIS_PRICE_CURRENT_INDEX_URL",
     "DISPATCHIS_PRICE_FEED", "DISPATCH_SCADA_ARCHIVE_BASE_URL",
     "DISPATCH_SCADA_CURRENT_INDEX_URL", "DISPATCH_SCADA_FEED", "MAX_ARCHIVE_ARTIFACTS",
     "MAX_ARCHIVE_RANGE_DAYS", "MAX_DAILY_INTERVALS", "MAX_NESTED_ARCHIVE_BYTES",
-    "MAX_NESTED_COMPRESSION_RATIO", "MAX_OUTER_ARCHIVE_BYTES",
-    "MAX_OUTER_COMPRESSED_BYTES", "MAX_OUTER_UNCOMPRESSED_BYTES", "NemwebArchiveError",
+    "MAX_NESTED_COMPRESSION_RATIO", "MAX_NESTED_RECURSION_DEPTH",
+    "MAX_OUTER_ARCHIVE_BYTES",
+    "MAX_OUTER_COMPRESSED_BYTES", "MAX_OUTER_UNCOMPRESSED_BYTES",
+    "NestedArchiveNode", "NestedArchiveTree", "NemwebArchiveError",
     "NemwebArchiveExtraction", "NemwebNestedArchiveArtifact", "NemwebOuterArchiveArtifact",
-    "NEMWEB_ORIGIN", "extract_nested_archive", "plan_archive_range",
+    "NEMWEB_ORIGIN", "extract_nested_archive", "extract_nested_archive_tree",
+    "plan_archive_range",
 ]

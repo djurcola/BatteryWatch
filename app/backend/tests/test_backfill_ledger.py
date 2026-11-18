@@ -89,6 +89,13 @@ class BackfillLedgerMigrationTests(unittest.TestCase):
         self.assertIn("004_historical_backfill_ledger.sql", migrate_script)
         self.assertIn("SELECT count(*) = 13", migrate_script)
         self.assertEqual(migrate_script.count('--dbname="$database_url"'), 9)
+        ordered = (
+            "003_dispatch_price_artifacts.sql",
+            "004_historical_backfill_ledger.sql",
+            "005_historical_source_artifacts.sql",
+        )
+        positions = tuple(migrate_script.index(name) for name in ordered)
+        self.assertEqual(positions, tuple(sorted(positions)))
         self.assertIn("ON DELETE RESTRICT", migration)
         self.assertIn("event_seq BIGSERIAL PRIMARY KEY", migration)
         self.assertIn("historical_backfill_items_claim_idx", migration)
@@ -207,6 +214,41 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
         self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
         self.assertEqual(len(connection.executions), 3)
 
+    def test_finalize_rejects_failed_run_without_update(self) -> None:
+        connection = FakeConnection(
+            fetchone_results=(
+                ("failed",),
+                ("failed", 2, 0, 0, 2, 0, 3),
+            )
+        )
+
+        with self.assertRaisesRegex(BackfillRunConflictError, "finalized"):
+            PostgreSQLBackfillLedger(connection).finalize("run-20260828")
+
+        self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
+        self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
+        self.assertEqual(len(connection.executions), 2)
+        self.assertFalse(
+            any(
+                "UPDATE historical_backfill_runs" in statement
+                for statement, _ in connection.executions
+            )
+        )
+
+    def test_finalize_rejects_run_with_failed_items_as_incomplete(self) -> None:
+        connection = FakeConnection(
+            fetchone_results=(
+                ("running",),
+                ("running", 2, 0, 0, 1, 1, 3),
+            )
+        )
+
+        with self.assertRaisesRegex(BackfillRunConflictError, "incomplete"):
+            PostgreSQLBackfillLedger(connection).finalize("run-20260828")
+
+        self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
+        self.assertEqual(len(connection.executions), 2)
+
     def test_fail_records_guarded_item_transition_and_event(self) -> None:
         claim = BackfillClaim(
             "run-20260828",
@@ -278,6 +320,31 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
             ([], 0, 0, 0),
         )
 
+    def test_fail_rejects_stale_claim_for_already_completed_item(self) -> None:
+        claim = BackfillClaim(
+            "run-20260828",
+            "dispatch_scada",
+            date(2026, 8, 28),
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/Dispatch_SCADA/"
+            "PUBLIC_DISPATCHSCADA_20260828.zip",
+            2,
+        )
+        connection = FakeConnection(
+            fetchone_results=((claim.source_url, "completed", claim.attempt_number),)
+        )
+
+        with self.assertRaises(BackfillRunConflictError):
+            PostgreSQLBackfillLedger(connection).fail(
+                claim, error_summary="archive checksum mismatch"
+            )
+
+        self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
+        self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
+        self.assertEqual(len(connection.executions), 1)
+        self.assertNotIn(
+            "status = 'failed'", connection.executions[0][0]
+        )
+
     def test_complete_records_guarded_item_transition_and_event(self) -> None:
         claim = BackfillClaim(
             "run-20260828",
@@ -342,6 +409,29 @@ class PostgreSQLBackfillLedgerTests(unittest.TestCase):
             (connection.executions, connection.cursor_calls,
              connection.commits, connection.rollbacks),
             ([], 0, 0, 0),
+        )
+
+    def test_complete_rejects_stale_claim_for_already_completed_item(self) -> None:
+        claim = BackfillClaim(
+            "run-20260828",
+            "dispatch_price",
+            date(2026, 8, 28),
+            "https://www.nemweb.com.au/REPORTS/ARCHIVE/DispatchIS_Reports/"
+            "PUBLIC_DISPATCHIS_20260828.zip",
+            4,
+        )
+        connection = FakeConnection(
+            fetchone_results=((claim.source_url, "completed", claim.attempt_number),)
+        )
+
+        with self.assertRaises(BackfillRunConflictError):
+            PostgreSQLBackfillLedger(connection).complete(claim, records_imported=145)
+
+        self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
+        self.assertEqual((connection.cursor_calls, connection.closed_cursors), (1, 1))
+        self.assertEqual(len(connection.executions), 1)
+        self.assertNotIn(
+            "status = 'completed'", connection.executions[0][0]
         )
 
     def test_claim_next_claims_deterministic_item_and_appends_event(self) -> None:

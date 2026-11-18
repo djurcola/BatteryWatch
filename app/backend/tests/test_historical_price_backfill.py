@@ -14,6 +14,7 @@ from batterywatch_api.nemweb_archives import (
     NemwebOuterArchiveArtifact,
 )
 from batterywatch_api.nemweb_dispatch_prices import (
+    DISPATCH_PRICE_INDEX_URL,
     DispatchPriceArtifact,
     DispatchPriceArtifactRef,
     DispatchPriceCollection,
@@ -136,7 +137,10 @@ class HistoricalPriceBackfillTests(unittest.TestCase):
         ) -> DispatchPriceIngestionResult:
             collection: DispatchPriceCollection = collect(ingestion_version=0, correction_version=0)
             operations.append(f"ingest:{connection.number}:{collection.artifact.reference.source_artifact_id}")
-            self.assertEqual(receipt_source_url, f"{outer_url}#{collection.artifact.reference.zip_filename}")
+            self.assertEqual(
+                receipt_source_url,
+                DISPATCH_PRICE_INDEX_URL + collection.artifact.reference.zip_filename,
+            )
             self.assertIn(-25.0, tuple(record.price_aud_per_mwh for record in collection.records))
             return DispatchPriceIngestionResult(0, True)
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 import unittest
 from unittest.mock import patch
-from zipfile import ZIP_BZIP2, ZIP_DEFLATED, ZipFile, ZipInfo
+from zipfile import ZIP_BZIP2, ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
 from batterywatch_api.aemo import parse_dispatch_price_mms_csv
 from batterywatch_api.nemweb_archives import (
@@ -16,9 +16,11 @@ from batterywatch_api.nemweb_archives import (
     CURRENT_INDEX_SOURCE,
     DISPATCHIS_PRICE_FEED,
     DISPATCH_SCADA_FEED,
+    MAX_NESTED_RECURSION_DEPTH,
     ArchivePlanItem,
     NemwebArchiveError,
     extract_nested_archive,
+    extract_nested_archive_tree,
     plan_archive_range,
 )
 
@@ -225,10 +227,17 @@ def _outer_zip_members(
 def _encrypted_outer_zip(member_name: str, inner_payload: bytes) -> bytes:
     buffer = BytesIO()
     with ZipFile(buffer, "w") as archive:
-        info = ZipInfo(member_name)
-        info.flag_bits |= 1
-        archive.writestr(info, inner_payload)
-    return buffer.getvalue()
+        archive.writestr(member_name, inner_payload)
+    return _flag_encrypted(buffer.getvalue())
+
+
+def _flag_encrypted(payload: bytes) -> bytes:
+    data = bytearray(payload)
+    assert data[:4] == b"PK\x03\x04"
+    data[6] |= 1
+    central = data.rindex(b"PK\x01\x02")
+    data[central + 8] |= 1
+    return bytes(data)
 
 
 class NestedArchiveExtractionTests(unittest.TestCase):
@@ -611,6 +620,428 @@ class NestedArchiveExtractionTests(unittest.TestCase):
             nested.member_name = "changed"  # type: ignore[misc]
         with self.assertRaises(FrozenInstanceError):
             extraction.nested = ()  # type: ignore[misc]
+
+
+_NEM_TIMEZONE = timezone(timedelta(hours=10))
+
+
+class ArchivePlannerDeterminismTests(unittest.TestCase):
+    def test_plan_is_deterministic_and_independent_of_requested_feed_order(self) -> None:
+        archived_dates = {
+            DISPATCH_SCADA_FEED: (date(2026, 8, 30), date(2026, 8, 31)),
+            DISPATCHIS_PRICE_FEED: (date(2026, 8, 30), date(2026, 8, 31)),
+        }
+        first = plan_archive_range(
+            datetime(2026, 8, 29, 14, 30, tzinfo=UTC),
+            datetime(2026, 8, 30, 14, 30, tzinfo=UTC),
+            feeds=(DISPATCH_SCADA_FEED, DISPATCHIS_PRICE_FEED),
+            archived_dates=archived_dates,
+        )
+        second = plan_archive_range(
+            datetime(2026, 8, 29, 14, 30, tzinfo=UTC),
+            datetime(2026, 8, 30, 14, 30, tzinfo=UTC),
+            feeds=(DISPATCHIS_PRICE_FEED, DISPATCH_SCADA_FEED),
+            archived_dates=archived_dates,
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(
+            tuple((item.feed, item.report_date) for item in first.items),
+            (
+                (DISPATCH_SCADA_FEED, date(2026, 8, 30)),
+                (DISPATCHIS_PRICE_FEED, date(2026, 8, 30)),
+                (DISPATCH_SCADA_FEED, date(2026, 8, 31)),
+                (DISPATCHIS_PRICE_FEED, date(2026, 8, 31)),
+            ),
+        )
+
+    def test_normalizes_non_utc_aware_bounds_to_utc(self) -> None:
+        plan = plan_archive_range(
+            datetime(2026, 8, 30, 0, 30, tzinfo=_NEM_TIMEZONE),
+            datetime(2026, 8, 31, 0, 30, tzinfo=_NEM_TIMEZONE),
+            feeds=(DISPATCH_SCADA_FEED,),
+            archived_dates={
+                DISPATCH_SCADA_FEED: (date(2026, 8, 30), date(2026, 8, 31)),
+            },
+        )
+        self.assertEqual(
+            (plan.start, plan.end),
+            (
+                datetime(2026, 8, 29, 14, 30, tzinfo=UTC),
+                datetime(2026, 8, 30, 14, 30, tzinfo=UTC),
+            ),
+        )
+
+    def test_rejects_empty_non_string_and_duplicate_feeds(self) -> None:
+        start = datetime(2026, 8, 30, tzinfo=UTC)
+        end = datetime(2026, 8, 31, tzinfo=UTC)
+        cases: tuple[Any, ...] = ((), (5,), (DISPATCH_SCADA_FEED, DISPATCH_SCADA_FEED))
+        for feeds in cases:
+            with self.subTest(feeds=feeds), self.assertRaises(NemwebArchiveError):
+                plan_archive_range(start, end, feeds=feeds, archived_dates={})
+
+    def test_rejects_non_datetime_bounds_and_invalid_artifact_limits(self) -> None:
+        valid_dates = {DISPATCH_SCADA_FEED: (date(2026, 8, 30),)}
+        cases: tuple[Any, ...] = (
+            (None, datetime(2026, 8, 31, tzinfo=UTC)),
+            ("2026-08-30T00:00:00Z", datetime(2026, 8, 31, tzinfo=UTC)),
+            (datetime(2026, 8, 30, tzinfo=UTC), None),
+        )
+        for start, end in cases:
+            with self.subTest(start=start, end=end), self.assertRaises(NemwebArchiveError):
+                plan_archive_range(
+                    start, end, feeds=(DISPATCH_SCADA_FEED,), archived_dates=valid_dates
+                )
+        limits: tuple[Any, ...] = (True, None, -1)
+        for limit in limits:
+            with self.subTest(limit=limit), self.assertRaises(NemwebArchiveError):
+                plan_archive_range(
+                    datetime(2026, 8, 30, tzinfo=UTC),
+                    datetime(2026, 8, 31, tzinfo=UTC),
+                    feeds=(DISPATCH_SCADA_FEED,),
+                    archived_dates=valid_dates,
+                    max_artifacts=limit,
+                )
+
+    def test_rejects_malformed_availability_mappings(self) -> None:
+        start = datetime(2026, 8, 30, tzinfo=UTC)
+        end = datetime(2026, 8, 31, tzinfo=UTC)
+        cases: tuple[Any, ...] = (
+            [DISPATCH_SCADA_FEED],
+            {DISPATCH_SCADA_FEED: "2026-08-30"},
+            {DISPATCH_SCADA_FEED: (datetime(2026, 8, 30),)},
+            {DISPATCH_SCADA_FEED: (None,)},
+            {"unknown": (date(2026, 8, 30),)},
+        )
+        for archived_dates in cases:
+            with self.subTest(archived_dates=archived_dates), self.assertRaises(
+                NemwebArchiveError
+            ):
+                plan_archive_range(
+                    start, end, feeds=(DISPATCH_SCADA_FEED,),
+                    archived_dates=archived_dates,
+                )
+
+
+class OuterArchiveShapeTests(unittest.TestCase):
+    def _item(self) -> ArchivePlanItem:
+        return ArchivePlanItem(
+            feed=DISPATCH_SCADA_FEED,
+            report_date=_REPORT_DATE,
+            source=ARCHIVE_SOURCE,
+            url=_SCADA_URL,
+        )
+
+    def test_rejects_empty_or_non_bytes_outer_payload(self) -> None:
+        payload: Any
+        for payload in (b"", b"truncated", "not bytes", bytearray(b"PK")):
+            with self.subTest(payload=type(payload).__name__), self.assertRaises(
+                NemwebArchiveError
+            ):
+                extract_nested_archive(self._item(), payload, allow_reduced=True)
+
+    def test_rejects_zero_member_outer_archive(self) -> None:
+        with self.assertRaises(NemwebArchiveError):
+            extract_nested_archive(
+                self._item(), _outer_zip_members(()), allow_reduced=True
+            )
+
+    def test_accepts_stored_zip_members(self) -> None:
+        csv_payload = _canonical_fixture_csv(
+            "dispatch-scada-20260830-1455-reduced.csv",
+            _SCADA_SOURCE_ID,
+            "DISPATCHSCADA",
+        )
+        inner_buffer = BytesIO()
+        with ZipFile(inner_buffer, "w", compression=ZIP_STORED) as archive:
+            archive.writestr(_SCADA_MEMBER.removesuffix(".zip") + ".CSV", csv_payload)
+        outer_payload = _outer_zip_members(
+            ((_SCADA_MEMBER, inner_buffer.getvalue()),), compression=ZIP_STORED
+        )
+
+        extraction = extract_nested_archive(
+            self._item(), outer_payload, allow_reduced=True
+        )
+
+        self.assertEqual(len(extraction.nested), 1)
+        self.assertEqual(extraction.nested[0].member_name, _SCADA_MEMBER)
+        self.assertEqual(
+            extraction.nested[0].interval_timestamp,
+            datetime(2026, 8, 30, 4, 55, tzinfo=UTC),
+        )
+
+
+def _tree(levels: tuple[tuple[str, bytes], ...]) -> bytes:
+    return _outer_zip_members(levels)
+
+
+class NestedArchiveTreeExtractionTests(unittest.TestCase):
+    def _three_level_payloads(self) -> tuple[bytes, bytes, bytes, bytes]:
+        leaf = b"nested leaf content"
+        level3 = _tree((("leaf.txt", leaf),))
+        level2 = _tree((("c.zip", level3),))
+        level1 = _tree((("b.zip", level2),))
+        root = _tree((("top.csv", b"top"), ("a.zip", level1)))
+        return root, level1, level2, level3
+
+    def test_extracts_multi_level_nested_archive_with_deterministic_paths(self) -> None:
+        root, level1, level2, level3 = self._three_level_payloads()
+
+        extraction = extract_nested_archive_tree(root)
+
+        self.assertEqual(extraction.sha256, sha256(root).hexdigest())
+        self.assertEqual(
+            tuple(node.name for node in extraction.members), ("a.zip", "top.csv")
+        )
+        a_node = extraction.members[0]
+        self.assertEqual((a_node.path, a_node.payload, a_node.sha256),
+                         ("a.zip", level1, sha256(level1).hexdigest()))
+        (b_node,) = a_node.children
+        self.assertEqual((b_node.name, b_node.path, b_node.payload),
+                         ("b.zip", "a.zip/b.zip", level2))
+        (c_node,) = b_node.children
+        self.assertEqual((c_node.name, c_node.path, c_node.payload),
+                         ("c.zip", "a.zip/b.zip/c.zip", level3))
+        (leaf_node,) = c_node.children
+        self.assertEqual(
+            (leaf_node.name, leaf_node.path, leaf_node.payload, leaf_node.children),
+            ("leaf.txt", "a.zip/b.zip/c.zip/leaf.txt", b"nested leaf content", ()),
+        )
+        top_node = extraction.members[1]
+        self.assertEqual((top_node.path, top_node.payload, top_node.children),
+                         ("top.csv", b"top", ()))
+
+    def test_tree_is_deterministic_independent_of_outer_member_order(self) -> None:
+        root, level1, _, _ = self._three_level_payloads()
+        reordered = _tree((("a.zip", level1), ("top.csv", b"top")))
+
+        first = extract_nested_archive_tree(root)
+        second = extract_nested_archive_tree(reordered)
+
+        self.assertEqual(first.members, second.members)
+        with self.assertRaises(FrozenInstanceError):
+            first.members = ()  # type: ignore[misc]
+        with self.assertRaises(FrozenInstanceError):
+            first.members[0].path = "changed"  # type: ignore[misc]
+
+    def test_rejects_payloads_outside_supported_formats(self) -> None:
+        valid_inner = _tree((("leaf.txt", b"leaf"),))
+        cases: tuple[Any, ...] = (
+            b"",
+            b"truncated",
+            "not bytes",
+            bytearray(b"PK"),
+            _outer_zip_members((("a.zip", b"x"),), compression=ZIP_BZIP2),
+            _encrypted_outer_zip("a.zip", valid_inner),
+            _outer_zip_members((("dir/", b""),)),
+        )
+        for payload in cases:
+            with self.subTest(payload=type(payload).__name__), self.assertRaises(
+                NemwebArchiveError
+            ):
+                extract_nested_archive_tree(payload)
+
+    def test_rejects_unsafe_member_names(self) -> None:
+        cases = (
+            _outer_zip_members((("../evil.zip", b"x"),)),
+            _outer_zip_members((("a\\b.zip", b"x"),)),
+        )
+        for payload in cases:
+            with self.assertRaises(NemwebArchiveError):
+                extract_nested_archive_tree(payload)
+        buffer = BytesIO()
+        with ZipFile(buffer, "w") as archive:
+            archive.writestr(ZipInfo(""), b"x")
+        with self.assertRaises(NemwebArchiveError):
+            extract_nested_archive_tree(buffer.getvalue())
+
+    def test_rejects_nested_archives_beyond_depth_limit(self) -> None:
+        level2 = _tree((("leaf.txt", b"leaf"),))
+        level1 = _tree((("b.zip", level2),))
+        two_level = _tree((("a.zip", level1),))
+
+        self.assertEqual(
+            extract_nested_archive_tree(two_level, max_depth=2).members[0].path,
+            "a.zip",
+        )
+        with self.assertRaises(NemwebArchiveError):
+            extract_nested_archive_tree(two_level, max_depth=1)
+        with patch("batterywatch_api.nemweb_archives.MAX_NESTED_RECURSION_DEPTH", 1):
+            with self.assertRaises(NemwebArchiveError):
+                extract_nested_archive_tree(two_level)
+            with self.assertRaises(NemwebArchiveError):
+                extract_nested_archive_tree(two_level, max_depth=2)
+
+    def test_rejects_invalid_depth_limits(self) -> None:
+        payload = _tree((("leaf.txt", b"leaf"),))
+        limits: tuple[Any, ...] = (0, -1, 4, True, "2")
+        for limit in limits:
+            with self.subTest(limit=limit), self.assertRaises(NemwebArchiveError):
+                extract_nested_archive_tree(payload, max_depth=limit)
+
+    def test_rejects_exactly_four_nested_levels_at_default_depth(self) -> None:
+        self.assertEqual(MAX_NESTED_RECURSION_DEPTH, 3)
+        four_level = _tree((
+            ("a.zip", _tree((
+                ("b.zip", _tree((
+                    ("c.zip", _tree((
+                        ("d.zip", _tree((("leaf.txt", b"leaf"),))),
+                    ),)),
+                ),)),
+            ),)),
+        ))
+        with self.assertRaises(NemwebArchiveError):
+            extract_nested_archive_tree(four_level)
+
+    def test_rejects_duplicate_member_names_at_any_level(self) -> None:
+        inner = _tree((("leaf.txt", b"leaf"),))
+        cases = (
+            _tree((("a.zip", inner), ("a.zip", inner))),
+            _tree((("a.zip", _tree((("x.txt", b"1"), ("x.txt", b"2")))),)),
+        )
+        for payload in cases:
+            with self.assertRaises(NemwebArchiveError):
+                extract_nested_archive_tree(payload)
+
+    def test_rejects_malformed_nested_zip_members(self) -> None:
+        good_inner = _tree((("leaf.txt", b"leaf"),))
+        truncated = good_inner[:-8]
+        cases = (
+            _tree((("a.zip", b"not a zip"),)),
+            _tree((("a.zip", truncated),)),
+            _tree((("a.zip", _tree((("empty.txt", b""),))),)),
+        )
+        for payload in cases:
+            with self.assertRaises(NemwebArchiveError):
+                extract_nested_archive_tree(payload)
+
+    def test_rejects_empty_archives_at_any_level(self) -> None:
+        with self.assertRaises(NemwebArchiveError):
+            extract_nested_archive_tree(_tree(()))
+        with self.assertRaises(NemwebArchiveError):
+            extract_nested_archive_tree(_tree((("a.zip", _tree(())),)))
+
+    def test_rejects_members_exceeding_size_and_count_bounds(self) -> None:
+        filler = bytes(range(256)) * 40
+        inner = _tree((("leaf.txt", filler),))
+        payload = _tree((("a.zip", inner),))
+        cases = (
+            ("MAX_NESTED_ARCHIVE_BYTES", 1),
+            ("MAX_OUTER_COMPRESSED_BYTES", 0),
+            ("MAX_OUTER_UNCOMPRESSED_BYTES", 0),
+            ("MAX_OUTER_ARCHIVE_BYTES", len(payload) - 1),
+        )
+        for constant, value in cases:
+            with self.subTest(constant=constant), patch(
+                f"batterywatch_api.nemweb_archives.{constant}", value
+            ), self.assertRaises(NemwebArchiveError):
+                extract_nested_archive_tree(payload)
+        two_members = _tree((("a.txt", b"1"), ("b.txt", b"2")))
+        with patch("batterywatch_api.nemweb_archives.MAX_DAILY_INTERVALS", 1):
+            with self.assertRaises(NemwebArchiveError):
+                extract_nested_archive_tree(two_members)
+
+    def test_accepts_stored_compression_at_every_level(self) -> None:
+        inner = _outer_zip_members((("leaf.csv", b"row"),), compression=ZIP_STORED)
+        root = _outer_zip_members((("a.zip", inner),), compression=ZIP_STORED)
+
+        extraction = extract_nested_archive_tree(root)
+
+        (a_node,) = extraction.members
+        (leaf_node,) = a_node.children
+        self.assertEqual((leaf_node.path, leaf_node.payload), ("a.zip/leaf.csv", b"row"))
+
+
+class PlannerExtractorIntegrationTests(unittest.TestCase):
+    """A planned archive traversed through nested extraction, deterministically."""
+
+    def _plan_single_day(self, feed: str) -> ArchivePlanItem:
+        plan = plan_archive_range(
+            datetime(2026, 8, 29, 14, 30, tzinfo=UTC),
+            datetime(2026, 8, 30, 14, 0, tzinfo=UTC),
+            feeds=(feed,),
+            archived_dates={feed: (_REPORT_DATE,)},
+        )
+        (item,) = plan.items
+        return item
+
+    def test_planned_scada_archive_traverses_nested_extraction_deterministically(self) -> None:
+        item = self._plan_single_day(DISPATCH_SCADA_FEED)
+        self.assertEqual(
+            (item.feed, item.report_date, item.source, item.url),
+            (DISPATCH_SCADA_FEED, _REPORT_DATE, ARCHIVE_SOURCE, _SCADA_URL),
+        )
+        second_member = "PUBLIC_DISPATCHSCADA_202608301500_0000000535210765.zip"
+        first_csv = _scada_csv_at("2026/08/30 14:55:00", _SCADA_SOURCE_ID)
+        second_csv = _scada_csv_at("2026/08/30 15:00:00", "0000000535210765")
+        outer_payload = _outer_zip_members((
+            (second_member, _inner_zip(second_member, second_csv)),
+            (_SCADA_MEMBER, _inner_zip(_SCADA_MEMBER, first_csv)),
+        ))
+
+        first = extract_nested_archive(item, outer_payload, allow_reduced=True)
+        second = extract_nested_archive(item, outer_payload, allow_reduced=True)
+        self.assertEqual(first, second)
+        self.assertEqual(
+            tuple(artifact.interval_timestamp for artifact in first.nested),
+            (
+                datetime(2026, 8, 30, 4, 55, tzinfo=UTC),
+                datetime(2026, 8, 30, 5, 0, tzinfo=UTC),
+            ),
+        )
+
+        tree = extract_nested_archive_tree(outer_payload)
+        self.assertEqual(tree, extract_nested_archive_tree(outer_payload))
+        self.assertEqual(tree.sha256, first.outer.sha256)
+        self.assertEqual(
+            tuple(node.name for node in tree.members),
+            (_SCADA_MEMBER, second_member),
+        )
+        csv_by_member = {_SCADA_MEMBER: first_csv, second_member: second_csv}
+        for node in tree.members:
+            artifact = next(
+                candidate for candidate in first.nested
+                if candidate.member_name == node.name
+            )
+            self.assertEqual((node.payload, node.sha256),
+                             (artifact.raw_bytes, artifact.sha256))
+            (leaf,) = node.children
+            self.assertEqual(
+                (leaf.path, leaf.payload),
+                (f"{node.name}/{node.name.removesuffix('.zip')}.CSV",
+                 csv_by_member[node.name]),
+            )
+
+    def test_planned_price_archive_traverses_nested_tree_with_fixture_leaf(self) -> None:
+        item = self._plan_single_day(DISPATCHIS_PRICE_FEED)
+        self.assertEqual(
+            (item.feed, item.report_date, item.source, item.url),
+            (DISPATCHIS_PRICE_FEED, _REPORT_DATE, ARCHIVE_SOURCE, _PRICE_URL),
+        )
+        csv_payload = _canonical_fixture_csv(
+            "dispatch-price-20260830-1500-reduced.csv",
+            _PRICE_SOURCE_ID,
+            "DISPATCHIS",
+        )
+        outer_payload = _outer_zip(_PRICE_MEMBER, _inner_zip(_PRICE_MEMBER, csv_payload))
+
+        extraction = extract_nested_archive(item, outer_payload, allow_reduced=True)
+        tree = extract_nested_archive_tree(outer_payload)
+
+        self.assertEqual(extraction, extract_nested_archive(item, outer_payload, allow_reduced=True))
+        self.assertEqual(tree, extract_nested_archive_tree(outer_payload))
+        self.assertEqual(tree.sha256, extraction.outer.sha256)
+        (node,) = tree.members
+        self.assertEqual(node.name, _PRICE_MEMBER)
+        self.assertEqual(node.payload, extraction.nested[0].raw_bytes)
+        (leaf,) = node.children
+        self.assertEqual(leaf.payload, csv_payload)
+        self.assertEqual(
+            parse_dispatch_price_mms_csv(
+                leaf.payload.decode("utf-8"), source_id=_PRICE_SOURCE_ID,
+                ingestion_version=0,
+            )[0].region,
+            "NSW1",
+        )
 
 
 if __name__ == "__main__":

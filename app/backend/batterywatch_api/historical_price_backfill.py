@@ -178,7 +178,7 @@ def _execute_price_claim(
             interval_result = ingest_cycle(
                 connection,
                 collect=lambda **unused: collection,
-                receipt_source_url=f"{claim.source_url}#{nested.member_name}",
+                receipt_source_url=DISPATCH_PRICE_INDEX_URL + nested.member_name,
             )
         price_count += len(records)
         applied_price_count += interval_result.price_count
