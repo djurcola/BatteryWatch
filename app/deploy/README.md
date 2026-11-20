@@ -53,6 +53,7 @@ python -m batterywatch_api.nextday_current_service \
 2. Non-interactive authority to stop/replace the existing root-managed `batterywatch.service` on port 8080, or an administrator performs that exact cutover locally.
 3. `pg_dump`, `pg_restore`, and `psql` available on the target.
 4. A release installed at `%h/batterywatch/releases/<release-id>` with `%h/batterywatch/current` as the reviewed symlink, a venv containing `app/backend/requirements.txt`, and a built `app/frontend/dist`.
+5. When replacing a release, copy the previous release's `app/frontend/dist/assets/*` into the new `dist/assets/` before switching. The SPA shell is served `Cache-Control: no-cache` and hashed assets are `immutable`, so carrying assets forward keeps a browser that still holds an older `index.html` working while it revalidates.
 
 ## Gates in order
 
@@ -64,7 +65,7 @@ python -m batterywatch_api.nextday_current_service \
 6. Query `verify-live.sql` plus `dispatch_price_artifacts`/`nem_price_5m`; require fresh SCADA and DispatchIS artifacts, raw power observations, mapped `generator_power_5m` rows, exactly five current regional price rows, and at least one reviewed battery DUID.
 7. Install the two user units under `~/.config/systemd/user/`, reload the user manager, enable/start the collector, and verify two successive five-minute artifacts or an exact replay followed by a new artifact.
 8. Stop only the approved root-managed fixture API, start the user `batterywatch-api.service` on port 8080, and require `/api/health` to report `data_mode=database`.
-9. Verify `/api/generators`, a bounded `/api/series` request, and the browser chart for one battery. Confirm regional price coverage/value estimates are visible, SOC null coverage remains explicit, and no fixture DUID appears.
+9. Verify `/api/generators`, a bounded `/api/series` request, and the browser chart for one battery. Confirm regional price coverage/value estimates are visible, SOC null coverage remains explicit, and no fixture DUID appears. Confirm `/` returns `Cache-Control: no-cache` and `/assets/<hashed>.js` returns `Cache-Control: public, max-age=31536000, immutable`.
 
 ## Host-side rollback
 
