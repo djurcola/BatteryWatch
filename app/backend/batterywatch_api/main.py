@@ -966,6 +966,18 @@ def create_app(
     application.include_router(router)
     if frontend_dist.is_dir():
         application.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+
+    @application.middleware("http")
+    async def static_cache_headers(
+        request: Request, call_next: Callable[[Request], Any]
+    ) -> Response:
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif path == "/" or path.endswith(".html"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
     return application
 
 
